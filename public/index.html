@@ -2065,6 +2065,7 @@ function initThree() {
   // メインスタンド
   scene.add(buildGrandstand());
   buildVenueDressing();
+  buildTreeLine();
   buildGate();
   addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 }
@@ -2273,6 +2274,93 @@ function makeBoardMesh(text, bg, fg, wide) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   return new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.7), new THREE.MeshBasicMaterial({ map: t, side: THREE.DoubleSide }));
 }
+/* ---------- 外周の樹木ライン（フェーズ17） ----------
+   コース外側の全周（スタンド裏を除く）に、実在の競馬場の外周樹林帯の
+   ように木を並べ、平坦な芝が空に落ちる「地平線の帯」を消す。内馬場には
+   入れない（従来方針どおり）。幹・樹冠とも InstancedMesh で描画回数を
+   抑え、樹冠は頂点をノイズ変形させた低ポリゴン＋フラットシェーディング
+   ＋1本ごとの色・大きさ・傾きのばらつきで、単純図形の繰り返しに見え
+   ないようにする。配置は決定的（毎回同じ）で、密度にも緩やかなムラを
+   つけてベタな一様林を避ける。 */
+function buildTreeLine() {
+  let seed = 20261127;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const angDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return d; };
+  const trees = [];
+  const rows = [
+    { off0: 30, off1: 46, keep: 0.95, s0: 0.85, s1: 1.3 },   // 前列: ラチの少し外
+    { off0: 54, off1: 80, keep: 0.8, s0: 0.95, s1: 1.5 },    // 中列
+    { off0: 94, off1: 138, keep: 0.5, s0: 1.1, s1: 1.75 },   // 後列: 霞の中の稜線用
+  ];
+  for (const row of rows) {
+    for (let t = 0; t < Math.PI * 2; t += 0.045) {
+      if (Math.abs(angDiff(t, 0)) < 0.46) continue;        // メインスタンド裏は空ける
+      if (Math.abs(angDiff(t, Math.PI)) < 0.42) continue;  // 向正面スタンド裏も空ける
+      const density = 0.65 + 0.35 * Math.sin(t * 3 + 1.7) * Math.sin(t * 5 + 0.4);
+      if (rnd() > row.keep * density) continue;
+      const tt = t + (rnd() - 0.5) * 0.02;
+      const c = ellipsePoint(tt), n = ellipseNormal(tt);
+      const off = row.off0 + rnd() * (row.off1 - row.off0);
+      trees.push({
+        x: c.x + n.x * off, z: c.z + n.z * off,
+        s: row.s0 + rnd() * (row.s1 - row.s0),
+        rot: rnd() * Math.PI * 2, tilt: (rnd() - 0.5) * 0.05,
+        tone: rnd(), tone2: rnd(),
+      });
+    }
+  }
+  // 幹: 先細りの円柱（原点は地面）
+  const trunkGeo = new THREE.CylinderGeometry(0.13, 0.27, 4.4, 6);
+  trunkGeo.translate(0, 2.2, 0);
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x59452f, roughness: 1 });
+  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, trees.length);
+  // 樹冠: 二十面体の頂点を位置ハッシュで変形させた有機的な塊（縦に少し潰す）
+  const canGeo = new THREE.IcosahedronGeometry(1, 1);
+  {
+    const pos = canGeo.attributes.position, v = new THREE.Vector3();
+    const hash3 = (x, y, z) => { const s = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453; return s - Math.floor(s); };
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      const d = 1 + (hash3(v.x * 3.1, v.y * 3.1, v.z * 3.1) - 0.5) * 0.52;
+      v.multiplyScalar(d); v.y *= 0.82;
+      pos.setXYZ(i, v.x, v.y, v.z);
+    }
+    canGeo.computeVertexNormals();
+  }
+  const canMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true });
+  const blobsPer = tr => tr.tone > 0.55 ? 3 : 2;
+  const canopies = new THREE.InstancedMesh(canGeo, canMat, trees.reduce((a, tr) => a + blobsPer(tr), 0));
+  const dummy = new THREE.Object3D(), col = new THREE.Color();
+  let ci = 0;
+  trees.forEach((tr, i) => {
+    dummy.position.set(tr.x, 0, tr.z);
+    dummy.rotation.set(tr.tilt, tr.rot, tr.tilt * 0.7);
+    dummy.scale.setScalar(tr.s);
+    dummy.updateMatrix();
+    trunks.setMatrixAt(i, dummy.matrix);
+    const blobs = [
+      { dx: 0, dy: 5.9, dz: 0, r: 3.5 },
+      { dx: 1.7, dy: 4.9, dz: 0.7, r: 2.4 },
+      { dx: -1.5, dy: 5.2, dz: -0.6, r: 2.1 },
+    ];
+    for (let b = 0; b < blobsPer(tr); b++) {
+      const bl = blobs[b], cr = Math.cos(tr.rot), sr = Math.sin(tr.rot);
+      dummy.position.set(tr.x + (bl.dx * cr - bl.dz * sr) * tr.s, bl.dy * tr.s, tr.z + (bl.dx * sr + bl.dz * cr) * tr.s);
+      dummy.rotation.set(0, tr.rot + b * 2.1, 0);
+      dummy.scale.set(bl.r * tr.s, bl.r * tr.s * 0.88, bl.r * tr.s);
+      dummy.updateMatrix();
+      canopies.setMatrixAt(ci, dummy.matrix);
+      col.setHSL(0.295 + tr.tone * 0.045, 0.36 + tr.tone2 * 0.14, 0.235 + tr.tone2 * 0.085 + b * 0.012);
+      canopies.setColorAt(ci, col);
+      ci++;
+    }
+  });
+  trunks.instanceMatrix.needsUpdate = true;
+  canopies.instanceMatrix.needsUpdate = true;
+  if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
+  scene.add(trunks); scene.add(canopies);
+}
+
 /* ---------- スタートゲート（1人用 buildStartGate / ゲートタイミングを移植） ---------- */
 function buildGate() {
   if (gateGroup || !scene) return;
@@ -2898,16 +2986,17 @@ function updateVisOffsets(dt) {
     }
   });
 }
-/* 歩幅カーブ（脚アニメ・歩様位相で共用）。フェーズ15で実馬の歩様に寄せて再設計:
-   実馬の競走ギャロップは速度とともに歩幅が伸び（約8m/sで4.2m・約12m/sで5.6m・
-   約17m/sで7.2m）、ケイデンスは 1.9→2.35歩/秒 と緩やかにしか上がらない。
-   旧カーブ（3.6+sf×2.2、上限5.8m）は歩幅が頭打ちで、17m/sでケイデンス2.93歩/秒と
-   実馬より脚が忙しく「足の動きと速度が比例しない」主因だった。
-   クリップ側も脚の振りを1.5倍に広げ（tools/amplify-gallop.js、FK実測で歩幅
-   4.74→5.43m）、このカーブの上限6.2mとの差を滑り最大約+2.1m/sに抑えた。
-   低速域の負の滑り（接地蹄が後ろへ流れる）は単一クリップの構造上残るが、
-   ケイデンスを実馬に合わせる方を優先した（数値表は README フェーズ15）。 */
-function strideLenOf(spd) { return clamp(1.55 + 0.335 * spd, 3.1, 6.2); }
+/* 歩幅（脚アニメ・歩様位相で共用）。フェーズ16で「定数」に変更:
+   この Gallop クリップは歩幅が速度で変わらない単一クリップで、脚振り1.5倍
+   加工後の実効歩幅は FK 実測で約6.4m（蹄別 6.0〜6.9m、周期0.5秒）。
+   旧カーブ clamp(1.55+0.335v, 3.1, 6.2) は実馬の歩幅カーブを模していたが、
+   固定歩幅のクリップに当てると低・中速域で歩幅が実効より短くなり、
+   ケイデンスが対地速度より 3〜8割速く・蹄が前に滑る（12m/sで滑り+2.3m/s）
+   ＝「足だけ早くて速度は遅い」見え方の主因だった。歩幅をクリップ実効値に
+   固定すれば、位相の進み＝進んだ距離÷歩幅 が全速度域で厳密に保たれ、
+   ケイデンスは速度に比例し、接地蹄の滑りは実測で ±0.5m/s 以内に収まる。 */
+const CLIP_STRIDE = 6.4; // Gallopクリップ（AMP1.5）の FK 実測歩幅
+function strideLenOf(spd) { return CLIP_STRIDE; }
 /* ---------- 土煙（フェーズ15） ----------
    ダートを蹴る土煙を、プール制スプライト（THREE.Points＋カスタムシェーダー）で
    描く。発生量は速度と馬群の密度に連動し、馬場が湿るほど減る（良1.0/稍重0.55/
@@ -2996,8 +3085,8 @@ function updateDust(dt) {
   dust.geo.attributes.aAlpha.needsUpdate = true;
   dust.geo.attributes.aShade.needsUpdate = true;
 }
-// 検証用フック（?orbit 時のみ）: 土煙の生存数と騎手の姿勢サンプルを外部から読む
-if (new URLSearchParams(location.search).has('orbit')) {
+// 検証用フック（?orbit / ?dbg 時のみ）: 土煙の生存数と騎手の姿勢サンプルを外部から読む
+if (new URLSearchParams(location.search).has('orbit') || new URLSearchParams(location.search).has('dbg')) {
   window.__km = {
     dustAlive: () => dust ? Array.from(dust.life).filter((v, i) => v < dust.maxLife[i]).length : -1,
     strideLenOf,
@@ -3005,6 +3094,51 @@ if (new URLSearchParams(location.search).has('orbit')) {
       const out = [];
       horseMeshes.forEach(m => { const v = m.userData.vis; if (v) out.push({ z: +v.jock.position.z.toFixed(3), rz: +v.jock.rotation.z.toFixed(3), rx: +v.jock.rotation.x.toFixed(3) }); });
       return out;
+    },
+    // 診断用: 1頭のミキサーを手動で1周期ステップし、Root位置とHips世界Yの系列を返す
+    probeClip: () => {
+      const m = [...horseMeshes.values()][0];
+      if (!m || !m.userData.anim) return null;
+      const anim = m.userData.anim;
+      const root = m.getObjectByName('Root');
+      const hips = m.getObjectByName('Hips');
+      const out = [];
+      const v = new THREE.Vector3(); const v2 = new THREE.Vector3();
+      const neck = m.getObjectByName('Neck');
+      for (let i = 0; i <= 20; i++) {
+        m.updateMatrixWorld(true);
+        let hy = null, ny = null;
+        if (hips) { hips.getWorldPosition(v); hy = +v.y.toFixed(3); }
+        if (neck) { neck.getWorldPosition(v2); ny = +v2.y.toFixed(3); }
+        out.push({ rootY: root ? +root.position.y.toFixed(3) : null, hipsY: hy, neckY: ny, gallopT: +anim.actions.Gallop.time.toFixed(3) });
+        anim.mixer.update(0.025);
+      }
+      return out;
+    },
+    sampleMeshes: () => {
+      const out = [];
+      const v = new THREE.Vector3();
+      horseMeshes.forEach((m, nick) => {
+        let visChain = true, o = m;
+        while (o) { if (!o.visible) { visChain = false; break; } o = o.parent; }
+        v.copy(m.position).project(camera);
+        const r = runners.get(nick);
+        out.push({
+          nick, x: +m.position.x.toFixed(2), y: +m.position.y.toFixed(2), z: +m.position.z.toFixed(2),
+          finite: Number.isFinite(m.position.x + m.position.y + m.position.z),
+          visChain, inFrustum: Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 && v.z >= -1 && v.z <= 1,
+          camDist: +camera.position.distanceTo(m.position).toFixed(1),
+          smoothDist: r ? +r.smoothDist.toFixed(2) : null, animSpeed: r ? +r.animSpeed.toFixed(2) : null,
+          gallopTime: m.userData.anim && m.userData.anim.actions.Gallop ? +m.userData.anim.actions.Gallop.time.toFixed(3) : null,
+          animCur: m.userData.anim ? m.userData.anim.current : null,
+          phase: r ? +r.phase.toFixed(2) : null,
+          hipsY: (() => { const h = m.getObjectByName('Hips'); if (!h) return null; const w = new THREE.Vector3(); h.getWorldPosition(w); return +w.y.toFixed(3); })(),
+          rootPosY: (() => { const rt = m.getObjectByName('Root'); return rt ? +rt.position.y.toFixed(3) : null; })(),
+          bodyY: m.userData.vis && m.userData.vis.bodyG ? +m.userData.vis.bodyG.position.y.toFixed(3) : null,
+          bodyRX: m.userData.vis && m.userData.vis.bodyG ? +m.userData.vis.bodyG.rotation.x.toFixed(4) : null,
+        });
+      });
+      return { myDist: +myDist.toFixed(2), mySpeed: +mySpeed.toFixed(2), racing, cam: [ +camera.position.x.toFixed(1), +camera.position.y.toFixed(1), +camera.position.z.toFixed(1) ], horses: out };
     },
   };
 }
@@ -3073,9 +3207,22 @@ function updateMeshes(dt) {
       if (isMe && performance.now() < whipUntil) crouchF = Math.min(1.1, crouchF + 0.15);
       const crouch = clamp((spd - 12) / 6, 0, 1) * crouchF;
       const ph = isMe ? myPhase : r.phase; // 脚・カメラと同じ位相源（ズレを構造的に無くす）
-      const susp = Math.pow(Math.max(0, Math.sin(ph - 0.55)), 2);
-      const surge = Math.sin(ph - 0.55);
-      vis.jock.rotation.x = crouch * 0.16 + Math.sin(ph - 1.05) * 0.028 * sfH; // 前傾＋歩様に同期した小さな頷き
+      const susp = Math.pow(Math.max(0, Math.sin(ph - 3.77)), 2); // 位相はクリップ実測に合わせた（フェーズ16: Root Y極大 f=0.85）
+      const surge = Math.sin(ph - 2.91); // ピッチ極大（f=0.70）と同位相
+      // 胴体: 脚と同じ位相で上下動＋前後のうねりをグループ単位で上乗せする
+      // （1人用 stepHorse の body 式が土台）。ただし位相定数は1人用のものを
+      // そのまま使うと、このモデルのクリップ実測（FK計測: Root Yは位相
+      // f=0.35で最低・f=0.85で最高、Hipsピッチはf=0.70で鼻上がり最大）と
+      // ほぼ逆位相になり上下動が打ち消し合うため、実測に合わせて付け替えた。
+      // クリップ自体の上下動（0.112m）と同位相で加わるので振幅は控えめに
+      // 再調整（合計で実馬の背の上下動 約0.15m 級）。騎手・馬具も bodyG 内
+      // なので一緒に動く。モデルは +z 向き（1人用は -z）のためピッチ符号反転。
+      if (vis.bodyG) {
+        vis.bodyG.position.y = susp * 0.055 * sfH - Math.pow(Math.max(0, Math.sin(ph - 0.63)), 2) * 0.02 * sfH;
+        vis.bodyG.rotation.x = -Math.sin(ph - 2.91) * 0.032 * sfH;
+        vis.bodyG.rotation.z = Math.sin(ph) * 0.012 * sfH;
+      }
+      vis.jock.rotation.x = crouch * 0.16 + Math.sin(ph - 2.4) * 0.028 * sfH; // 前傾＋歩様に同期した小さな頷き
       vis.jock.position.y = 1.66 + susp * 0.05 * sfH + Math.abs(Math.sin(ph)) * 0.02; // 鐙の上下（フェーズ12）
       vis.jock.position.z = 0.08 + surge * 0.035 * sfH; // 前後動: 馬の伸縮に合わせた体重移動
       // コーナー内傾: 進行方向の変化率（曲率）×速度² から求め、内側へだけ倒す（最大約5°）
@@ -3107,6 +3254,10 @@ function orbitCamera(dist) {
     camera.position.set(-58, 15, 124); camera.lookAt(-215, 6, 0);
   } else if (DEBUG_CAM === 'gate') {  // ゲートの斜め前
     camera.position.set(152, 4.5, 34); camera.lookAt(193, 1.8, -2);
+  } else if (DEBUG_CAM === 'trees') { // 内馬場から向正面の外側（地平線帯）を見る
+    camera.position.set(40, 5.5, 26); camera.lookAt(40, 7, -280);
+  } else if (DEBUG_CAM === 'trees2') { // コース際から外周方向（近い樹木と地平線）
+    camera.position.set(-60, 3.2, -96); camera.lookAt(-150, 6, -190);
   } else {
     camera.position.set(138, 9, 66);
     camera.lookAt(196, 1.6, -4);
@@ -3130,8 +3281,8 @@ function updateCamera(dt) {
      GLBのギャロップは約2.3歩/秒）とも速度変化とも無関係に揺れていた。
      振幅はいずれも1人用の値＝上限（酔い配慮）。 */
   const sf = clamp(mySpeed / 17, 0, 1.15); // 1人用と同一の sf 定義
-  const bobA = Math.sin(myPhase - 0.55) * 0.05 * sf;
-  const bobB = Math.pow(Math.max(0, Math.sin(myPhase - 0.55)), 2) * 0.05 * sf;
+  const bobA = Math.sin(myPhase - 3.77) * 0.05 * sf;
+  const bobB = Math.pow(Math.max(0, Math.sin(myPhase - 3.77)), 2) * 0.05 * sf;
   // 一人称: 馬の頭の少し後ろ・騎手の目線（1人用と同値）。自分の騎手は非表示、手綱は表示
   const camX = p.x - fwdX * 0.22, camZ = p.z - fwdZ * 0.22;
   camera.position.set(camX, 2.52 + bobA + bobB, camZ);
