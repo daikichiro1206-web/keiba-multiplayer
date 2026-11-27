@@ -596,7 +596,16 @@ function npcDecideLat(room, view, n) {
     const outT = clampN(home + 2.2, -LAT_MAX_S, 4.2);
     if (laneFree(outT, -1.5, 5.5)) { n.targetLat = outT; return; }
   }
-  if (Math.abs(n.lat - baseLat) > 0.35 && !laneFree(baseLat, -2.0, 3.0)) { n.targetLat = n.lat; return; }
+  if (Math.abs(n.lat - baseLat) > 0.35 && !laneFree(baseLat, -2.0, 3.0)) {
+    // ホームが塞がれている間も、内へ1レーン分の空きがあれば少しずつ寄せる
+    // （フェーズ16の最小調整: 1人用の元仕様は現位置で待ち続けるため、外へ
+    // 押し出された馬や外枠の馬が「塞がれたホーム」を理由にレース中ずっと
+    // 外を回り続けるケースがあった。空いている所へ1レーンずつ詰めるのは
+    // 実競馬の位置取りそのもので、無理な割り込みにはならない）
+    const stepIn = clampN(n.lat - 1.35, -LAT_MAX_S, LAT_MAX_S);
+    if (stepIn < n.lat - 0.3 && laneFree(stepIn, -1.5, 5.5)) { n.targetLat = stepIn; return; }
+    n.targetLat = n.lat; return;
+  }
   n.targetLat = baseLat;
 }
 /* NPC 1頭分の物理更新（1人用 stepHorse のNPC分岐を移植。
