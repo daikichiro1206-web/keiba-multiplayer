@@ -1052,8 +1052,17 @@ const LAT_MAX = 9.7;    // 1人用と同値: 横位置の上限(m)。レーン�
 function trackPoint(dist, lane) {
   const t = ((dist + physOff()) / TRACK_LEN) * Math.PI * 2;
   const rOff = (lane - 8.5) * LANE_W;
-  const x = Math.cos(t) * (A + rOff), z = Math.sin(t) * (B + rOff * 0.6);
-  const dx = -Math.sin(t), dz = Math.cos(t);
+  /* 位置はコース描画（リボン/ラチ）と同一の法線オフセットで求める:
+     中心線上の点 + 単位法線 × rOff。旧実装は楕円の媒介変数表示をそのまま
+     拡縮していたため、直線中央では実効オフセットが 0.6 倍に縮み、最内でも
+     ラチまで約6.8m離れて止まる「透明な壁」になっていた（1人用は worldPos が
+     接線の法線方向へ正確に lat だけずらす方式で、壁際まで寄せられる）。
+     向き（dx, dz）はオフセット曲線の差分から求める。 */
+  const c = ellipsePoint(t), n = ellipseNormal(t);
+  const x = c.x + n.x * rOff, z = c.z + n.z * rOff;
+  const t2 = t + 0.002, c2 = ellipsePoint(t2), n2 = ellipseNormal(t2);
+  let dx = (c2.x + n2.x * rOff) - x, dz = (c2.z + n2.z * rOff) - z;
+  const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
   return { x, z, dx, dz, t };
 }
 /* 横位置の符号規約（1人用 keiba-engine.js と完全一致させる）:
@@ -1479,6 +1488,33 @@ function crowdTexture() {
   const ct = new THREE.CanvasTexture(cc); ct.colorSpace = THREE.SRGBColorSpace; ct.anisotropy = 4; return ct;
 }
 // スタンドの横断幕（1人用と同デザイン）
+/* 座席テクスチャ: 段の前面・上面に貼り、座席の列感を出す（濃紺グレーの座席＋列の影） */
+function seatTexture() {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 128;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 128);
+  grad.addColorStop(0, '#4a4f55'); grad.addColorStop(1, '#33373c');
+  g.fillStyle = grad; g.fillRect(0, 0, 512, 128);
+  const seats = ['#3d4f6e', '#46587a', '#374863', '#4c5c78', '#414f68'];
+  const rowH = 21;
+  for (let r = 0; r < 6; r++) {
+    const y = 6 + r * rowH;
+    for (let x = 3; x < 508; x += 11) {
+      g.fillStyle = seats[(Math.random() * seats.length) | 0];
+      g.globalAlpha = 0.75 + Math.random() * 0.25;
+      g.fillRect(x, y, 9, 13);            // 座席の背もたれ
+      g.fillStyle = 'rgba(255,255,255,0.13)';
+      g.fillRect(x, y, 9, 2.4);           // 背もたれ上端の光
+    }
+    g.globalAlpha = 1;
+    g.fillStyle = 'rgba(12,14,16,0.5)'; g.fillRect(0, y + 15.5, 512, 2.6); // 列の影
+    g.fillStyle = 'rgba(210,214,218,0.20)'; g.fillRect(0, y + 18.5, 512, 1.4); // 通路の縁
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
 function bannerTexture() {
   const c = document.createElement('canvas'); c.width = 1024; c.height = 64;
   const g = c.getContext('2d');
@@ -1596,24 +1632,174 @@ function buildGrandstand() {
     mesh.position.set(x, y, z); mesh.castShadow = cast; mesh.receiveShadow = true;
     g.add(mesh); return mesh;
   };
-  add(new THREE.BoxGeometry(14, 3.2, 124), new THREE.MeshStandardMaterial({ map: facadeTexture(), roughness: 0.92 }), 218, 1.6, 0); // 土台（外壁テクスチャ）
-  for (let i = 0; i < 5; i++) {                                                            // 観客席の段
-    add(new THREE.BoxGeometry(4.6, 1.5, 122), std(i % 2 ? 0xcac4b6 : 0xd6d1c4, 0.95), 211.5 + i * 1.15, 3.95 + i * 1.5, 0);
+  const facadeTex = facadeTexture(); facadeTex.wrapS = THREE.RepeatWrapping; facadeTex.repeat.set(6, 1);
+  add(new THREE.BoxGeometry(14, 3.2, 124), new THREE.MeshStandardMaterial({ map: facadeTex, roughness: 0.92 }), 218, 1.6, 0); // 土台（外壁テクスチャ）
+  // 観客席の段: 各段に座席テクスチャ（列感）を貼り、前面に段ごとの観客プレーンを重ねる
+  // （1人用 makeStand と同じ見せ方。旧実装は平らな観客プレーン1枚で階層感が無かった）
+  const seatBase = seatTexture(), crowdBase = crowdTexture();
+  for (let i = 0; i < 5; i++) {
+    const st = seatBase.clone(); st.needsUpdate = true; st.wrapS = st.wrapT = THREE.RepeatWrapping;
+    st.repeat.set(20, 1); st.offset.set(i * 0.31, 0);
+    add(new THREE.BoxGeometry(4.6, 1.5, 122), new THREE.MeshStandardMaterial({ map: st, roughness: 0.95 }), 211.5 + i * 1.15, 3.95 + i * 1.5, 0);
+    const ct = crowdBase.clone(); ct.needsUpdate = true; ct.wrapS = ct.wrapT = THREE.RepeatWrapping;
+    ct.offset.set(i * 0.37, i * 0.21);
+    const crowd = new THREE.Mesh(new THREE.PlaneGeometry(122, 1.18), new THREE.MeshBasicMaterial({ map: ct }));
+    crowd.rotation.y = -Math.PI / 2;
+    crowd.position.set(211.5 + i * 1.15 - 2.36, 3.95 + i * 1.5 + 0.40, 0);
+    g.add(crowd);
   }
-  // 観客席の前面に観客テクスチャ（落ち着いたグレーの観衆）と、ガラス面に横断幕を重ねる（1人用と同じ見せ方）
-  const crowd = new THREE.Mesh(new THREE.PlaneGeometry(122, 5.2), new THREE.MeshBasicMaterial({ map: crowdTexture() }));
-  crowd.rotation.y = -Math.PI / 2; crowd.position.set(209.0, 5.9, 0); g.add(crowd);
   add(new THREE.BoxGeometry(0.3, 0.9, 124), std(0x8c2f26, 0.7), 209.6, 8.6, 0);            // 赤い帯（ファシア）
   add(new THREE.BoxGeometry(0.3, 2.4, 104), new THREE.MeshStandardMaterial({ map: glassTexture(), roughness: 0.22, metalness: 0.35 }), 209.7, 10.6, 0); // ガラス面（空の映り込み）
   const ban = new THREE.Mesh(new THREE.PlaneGeometry(112, 1.6), new THREE.MeshBasicMaterial({ map: bannerTexture() }));
   ban.rotation.y = -Math.PI / 2; ban.position.set(209.48, 10.6, 0); g.add(ban);
   add(new THREE.BoxGeometry(21.3, 0.2, 126), std(0xd8d2c4, 0.6), 217, 13.05, 0);           // 屋根トリム
   add(new THREE.BoxGeometry(21, 0.45, 124), std(0x74443c, 0.72), 217, 13.35, 0);           // 屋根
-  for (let z = -54; z <= 54; z += 13.5) {                                                  // 柱
-    add(new THREE.CylinderGeometry(0.22, 0.22, 10.4, 8), std(0xeeeeee, 0.5, 0.4), 209.2, 5.2, z);
+  for (let z = -55; z <= 55; z += 13.75) {                                                 // 屋根裏の梁
+    add(new THREE.BoxGeometry(20, 0.35, 0.18), std(0x8f8a7c, 0.7), 217, 12.88, z);
+  }
+  // 屋根上のスタンド看板（支柱付き。実物の競馬場のルーフサイン）
+  const standSign = makeBoardMesh('競馬場', '#8c2f26', '#ffffff', true);
+  standSign.scale.set(2.6, 2.6, 1); standSign.rotation.y = -Math.PI / 2;
+  standSign.position.set(210, 15.3, 0); g.add(standSign);
+  [-2.5, 2.5].forEach(z => add(new THREE.BoxGeometry(0.15, 1.8, 0.15), std(0x6a6a66, 0.6, 0.4), 210, 14.2, z));
+  for (let z = -54; z <= 54; z += 13.5) {                                                  // 柱（観客席の手前）
+    add(new THREE.CylinderGeometry(0.22, 0.22, 10.4, 8), std(0xeeeeee, 0.5, 0.4), 208.7, 5.2, z);
   }
   return g;
 }
+/* ---------- 競馬場の装飾（1人用の景観要素を移植: 標識・ゴール板・大型スクリーン・向正面スタンド・照明塔） ---------- */
+function buildVenueDressing() {
+  const std = (c, r = 0.85, m = 0) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m });
+  const tangentAt = t => {
+    const a = ellipsePoint(t), b = ellipsePoint(t + 0.002);
+    const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1;
+    return { x: dx / l, z: dz / l };
+  };
+  const onCourse = (physDist, off) => {
+    const t = (physDist / TRACK_LEN) * Math.PI * 2;
+    const c = ellipsePoint(t), n = ellipseNormal(t);
+    return { x: c.x + n.x * off, z: c.z + n.z * off, tan: tangentAt(t) };
+  };
+  // 残り距離標識（あと○m）: ゴールまで200mごと、外側のラチの外に設置（1人用と同じ）
+  for (let bd = 200; bd < TRACK_LEN; bd += 200) {
+    const p = onCourse(TRACK_LEN - bd, 16.0);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.9, 6), std(0xdddddd, 0.6, 0.4));
+    post.position.set(p.x, 0.95, p.z); post.castShadow = true; scene.add(post);
+    const board = makeBoardMesh('あと' + bd + 'm', '#20401c', '#ffffff', true);
+    board.position.set(p.x, 1.7, p.z);
+    board.rotation.y = Math.atan2(-p.tan.x, -p.tan.z); // 近づく馬のほうを向く
+    scene.add(board);
+  }
+  // コーナー・区間標識（1人用と同じ文言・色）
+  [[1000, '第3コーナー'], [1450, '第4コーナー'], [1600, '最終直線']].forEach(([d, label]) => {
+    const p = onCourse(d, 16.0);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.2, 6), std(0xdddddd, 0.6, 0.4));
+    post.position.set(p.x, 1.1, p.z); post.castShadow = true; scene.add(post);
+    const sign = makeBoardMesh(label, '#7a3a10', '#ffffff', true);
+    sign.scale.set(1.25, 1.25, 1);
+    sign.position.set(p.x, 2.0, p.z);
+    sign.rotation.y = Math.atan2(-p.tan.x, -p.tan.z);
+    scene.add(sign);
+  });
+  // ゴール板: 外側の決勝ポスト（赤ポール＋金球）に「ゴール」板（1人用と同じ。内側ポストは既存）
+  const oPost = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 5, 10), std(0xd8232a, 0.5));
+  oPost.position.set(A + 12.6, 2.5, 0); oPost.castShadow = true; scene.add(oPost);
+  const oBall = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 12), std(0xffc21c, 0.35, 0.3));
+  oBall.position.set(A + 12.6, 5.1, 0); oBall.castShadow = true; scene.add(oBall);
+  const goalBoard = makeBoardMesh('ゴール', '#b02020', '#ffffff', true);
+  goalBoard.scale.set(1.55, 1.55, 1);
+  goalBoard.position.set(A + 12.6, 4.3, 0);
+  goalBoard.rotation.y = Math.PI; // 最終直線を向く
+  scene.add(goalBoard);
+  // 大型スクリーン（内馬場、メインスタンドと決勝線のほうを向く。1人用のLED看板を移植）
+  {
+    const cc = document.createElement('canvas'); cc.width = 512; cc.height = 256;
+    const cg = cc.getContext('2d');
+    cg.fillStyle = '#101820'; cg.fillRect(0, 0, 512, 256);
+    cg.fillStyle = '#ffc21c'; cg.font = '900 64px sans-serif'; cg.textAlign = 'center';
+    cg.fillText('競馬場', 256, 86);
+    cg.fillStyle = '#7ee0ff'; cg.font = '900 40px sans-serif';
+    cg.fillText('名馬たちの祭典', 256, 150);
+    cg.fillStyle = '#ffffff'; cg.font = '700 30px sans-serif';
+    cg.fillText('本日のレースをお楽しみください', 256, 205);
+    cg.fillStyle = 'rgba(0,0,0,0.13)';
+    for (let ly = 0; ly < 256; ly += 3) cg.fillRect(0, ly, 512, 1);
+    const sgrad = cg.createLinearGradient(0, 0, 0, 256);
+    sgrad.addColorStop(0, 'rgba(255,255,255,0.10)'); sgrad.addColorStop(1, 'rgba(0,0,0,0.16)');
+    cg.fillStyle = sgrad; cg.fillRect(0, 0, 512, 256);
+    cg.strokeStyle = '#05080c'; cg.lineWidth = 14; cg.strokeRect(0, 0, 512, 256);
+    const ct = new THREE.CanvasTexture(cc); ct.colorSpace = THREE.SRGBColorSpace; ct.anisotropy = 4;
+    const g = new THREE.Group();
+    const scr = new THREE.Mesh(new THREE.PlaneGeometry(30, 15), new THREE.MeshBasicMaterial({ map: ct }));
+    scr.position.set(0, 10, 0.7); g.add(scr);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(32, 16, 1.2), std(0x2c3138, 0.7));
+    back.position.set(0, 9.4, 0); back.castShadow = true; g.add(back);
+    [-11, 11].forEach(off => {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 4, 8), std(0x555c66, 0.5, 0.5));
+      leg.position.set(off, 2, 0); g.add(leg);
+    });
+    g.position.set(128, 0, 62);
+    g.rotation.y = Math.atan2(215 - 128, 0 - 62); // スタンド正面を向く
+    scene.add(g);
+  }
+  // 向正面スタンド（メインスタンドの鏡像の簡易版: 段席＋観客＋横断幕＋屋根）
+  {
+    const g = new THREE.Group();
+    const add = (geo, mat, x, y, z) => {
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true;
+      g.add(mesh); return mesh;
+    };
+    const bFacade = facadeTexture(); bFacade.wrapS = THREE.RepeatWrapping; bFacade.repeat.set(6, 1);
+    add(new THREE.BoxGeometry(14, 3.2, 112), new THREE.MeshStandardMaterial({ map: bFacade, roughness: 0.92 }), -3, 1.6, 0);
+    // メインスタンドと同じ作り: 座席テクスチャの段＋段ごとの観客プレーン
+    const bSeat = seatTexture(), bCrowd = crowdTexture();
+    for (let i = 0; i < 5; i++) {
+      const st = bSeat.clone(); st.needsUpdate = true; st.wrapS = st.wrapT = THREE.RepeatWrapping;
+      st.repeat.set(18, 1); st.offset.set(i * 0.43, 0);
+      add(new THREE.BoxGeometry(4.6, 1.5, 110), new THREE.MeshStandardMaterial({ map: st, roughness: 0.95 }), 3.5 - i * 1.15, 3.95 + i * 1.5, 0);
+      const ct = bCrowd.clone(); ct.needsUpdate = true; ct.wrapS = ct.wrapT = THREE.RepeatWrapping;
+      ct.offset.set(i * 0.53, i * 0.17);
+      const crowd = new THREE.Mesh(new THREE.PlaneGeometry(110, 1.18), new THREE.MeshBasicMaterial({ map: ct }));
+      crowd.rotation.y = Math.PI / 2;
+      crowd.position.set(3.5 - i * 1.15 + 2.36, 3.95 + i * 1.5 + 0.40, 0);
+      g.add(crowd);
+    }
+    add(new THREE.BoxGeometry(0.3, 0.9, 112), std(0x8c2f26, 0.7), 5.3, 8.6, 0);
+    add(new THREE.BoxGeometry(0.3, 2.4, 94), new THREE.MeshStandardMaterial({ map: glassTexture(), roughness: 0.22, metalness: 0.35 }), 5.2, 10.6, 0);
+    const ban = new THREE.Mesh(new THREE.PlaneGeometry(102, 1.6), new THREE.MeshBasicMaterial({ map: bannerTexture() }));
+    ban.rotation.y = Math.PI / 2; ban.position.set(5.38, 10.6, 0); g.add(ban);
+    add(new THREE.BoxGeometry(21.3, 0.2, 114), std(0xd8d2c4, 0.6), 0, 13.05, 0);
+    add(new THREE.BoxGeometry(21, 0.45, 112), std(0x74443c, 0.72), 0, 13.35, 0);
+    for (let z = -48; z <= 48; z += 13.5) {
+      add(new THREE.CylinderGeometry(0.22, 0.22, 10.4, 8), std(0xeeeeee, 0.5, 0.4), 6.0, 5.2, z);
+    }
+    g.position.set(-215, 0, 0);
+    scene.add(g);
+  }
+  // 照明塔（コース四隅の外側、1人用のマスト＋ランプバンクを簡略移植）
+  [[222, 150], [222, -150], [-222, 150], [-222, -150]].forEach(([fx, fz]) => {
+    const g = new THREE.Group();
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.4, 19, 8), std(0x9aa2ac, 0.45, 0.6));
+    pole.position.y = 9.5; pole.castShadow = true; g.add(pole);
+    for (let by = 4; by < 18; by += 3.4) {
+      [0.3, -0.3].forEach(bx => {
+        const brace = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.7, 0.1), std(0x8a939c, 0.5, 0.5));
+        brace.position.set(bx, by, 0); brace.rotation.z = bx > 0 ? 0.5 : -0.5; g.add(brace);
+      });
+    }
+    const head = new THREE.Mesh(new THREE.BoxGeometry(4.6, 1.7, 0.5), std(0x39404a, 0.6));
+    head.position.y = 19.4; head.castShadow = true; g.add(head);
+    for (let i = -1; i <= 1; i++) {
+      const lamp = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.3), new THREE.MeshBasicMaterial({ color: 0xfff3c4 }));
+      lamp.position.set(i * 1.5, 19.4, 0.28); g.add(lamp);
+    }
+    g.position.set(fx, 0, fz);
+    g.lookAt(0, 0, 0);
+    scene.add(g);
+  });
+}
+
 function initThree() {
   if (renderer) return;
   scene = new THREE.Scene();
@@ -1692,6 +1878,7 @@ function initThree() {
   ball.position.set(A - 12.6, 5.1, 0); ball.castShadow = true; scene.add(ball);
   // メインスタンド
   scene.add(buildGrandstand());
+  buildVenueDressing();
   buildGate();
   addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 }
@@ -1882,6 +2069,21 @@ function beginRace(field, meta) {
   lastFrame = performance.now();
   horseMeshes.forEach(m => setHorseAnim(m, 'Gallop'));
   requestAnimationFrame(raceLoop);
+}
+/* ---------- 看板（1人用 textSprite と同じ描き方: 塗装板の質感） ---------- */
+function makeBoardMesh(text, bg, fg, wide) {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 128);
+  grad.addColorStop(0, bg); grad.addColorStop(1, 'rgba(0,0,0,0.22)');
+  g.fillStyle = bg; g.fillRect(0, 0, 256, 128); g.fillStyle = grad; g.fillRect(0, 0, 256, 128);
+  g.strokeStyle = 'rgba(245,245,240,0.9)'; g.lineWidth = 7; g.strokeRect(4, 4, 248, 120);
+  g.fillStyle = 'rgba(0,0,0,0.18)'; g.fillRect(0, 118, 256, 10);
+  g.fillStyle = fg; g.font = '900 ' + (wide ? 46 : 64) + 'px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.shadowColor = 'rgba(0,0,0,0.35)'; g.shadowBlur = 3; g.shadowOffsetY = 2;
+  g.fillText(text, 128, 66);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.7), new THREE.MeshBasicMaterial({ map: t, side: THREE.DoubleSide }));
 }
 /* ---------- スタートゲート（1人用 buildStartGate / ゲートタイミングを移植） ---------- */
 function buildGate() {
@@ -2447,11 +2649,20 @@ function updateMeshes(dt) {
     }
   });
 }
+const DEBUG_CAM = new URLSearchParams(location.search).get('cam'); // 検証用カメラプリセット（?orbit&cam=stand 等）
 function orbitCamera(dist) {
   // 検証用固定視点: 内馬場側から決勝直線・ゴール・メインスタンドを一望する。
   // スタート直後の集団（全頭＋騎手）とスタンドが同じ画角に入る。
-  camera.position.set(138, 9, 66);
-  camera.lookAt(196, 1.6, -4);
+  if (DEBUG_CAM === 'stand') {        // メインスタンドの正面寄り
+    camera.position.set(120, 13, -72); camera.lookAt(212, 6, 6);
+  } else if (DEBUG_CAM === 'back') {  // 向正面スタンド
+    camera.position.set(-58, 15, 124); camera.lookAt(-215, 6, 0);
+  } else if (DEBUG_CAM === 'gate') {  // ゲートの斜め前
+    camera.position.set(152, 4.5, 34); camera.lookAt(193, 1.8, -2);
+  } else {
+    camera.position.set(138, 9, 66);
+    camera.lookAt(196, 1.6, -4);
+  }
   const p = trackPoint(dist, latToLane(myLat));
   if (sunLight) {
     sunLight.position.set(p.x + 20, 96, p.z + 12);
