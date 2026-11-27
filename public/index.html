@@ -5,29 +5,37 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>3D競馬ゲーム マルチプレイ</title>
 <style>
-  body { margin:0; font-family: sans-serif; background:#10240f; color:#fff; }
-  .panel { max-width:720px; margin:0 auto; padding:12px 16px 24px; }
-  h1 { font-size:20px; margin:10px 0; }
-  input, select, button { font-size:16px; padding:10px; margin:4px 0; border-radius:8px; border:none; }
-  button { background:#2e7d32; color:#fff; cursor:pointer; }
-  button.sub { background:#455a64; }
-  button:disabled { background:#666; opacity:.6; cursor:default; }
-  .card { background:rgba(255,255,255,.08); border-radius:12px; padding:12px; margin:10px 0; }
+  body { margin:0; font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Noto Sans JP",sans-serif; background:linear-gradient(180deg,#1d3c19 0%,#152d11 55%,#10240f 100%); background-attachment:fixed; color:#fff; font-size:15.5px; line-height:1.55; -webkit-tap-highlight-color:transparent; }
+  .panel { max-width:720px; margin:0 auto; padding:16px 18px 32px; }
+  h1 { font-size:23px; margin:14px 0 12px; letter-spacing:.03em; }
+  input, select, button { font-size:16px; padding:11px 12px; margin:4px 0; border-radius:12px; border:none; font-family:inherit; }
+  input, select { background:#fffdf6; color:#263238; }
+  button { background:linear-gradient(180deg,#43a047,#2e7d32); color:#fff; cursor:pointer; font-weight:700; box-shadow:0 3px 8px rgba(0,0,0,.28); }
+  button.sub { background:linear-gradient(180deg,#607d8b,#455a64); }
+  button:disabled { background:#666; opacity:.6; cursor:default; box-shadow:none; }
+  .card { background:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,.06)); border:1px solid rgba(255,255,255,.14); border-radius:16px; padding:16px; margin:12px 0; box-shadow:0 4px 14px rgba(0,0,0,.22); }
+  /* iOS対策: ボタン・カード・HUDを押してもテキスト選択やコピー等のコールアウトを出さない */
+  button, .horseCard, .chip, .distChips, .filterAxis, .filterVals, .bet-tabs, .stake-row,
+  #walletBar, #raceWrap, #raceWrap *, #camBar, .home-btns2, .modeBtns {
+    -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; touch-action:manipulation;
+  }
+  #raceWrap canvas { touch-action:none; }
+  input, textarea { -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; }
   .hidden { display:none !important; }
   .err { color:#ffab91; min-height:1.2em; }
   .code { font-size:28px; letter-spacing:4px; font-weight:bold; }
   /* 所持金バー（1人用版のホーム上部バーに相当） */
   #walletBar { position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:10px;
-    background:rgba(8,24,8,.92); padding:8px 12px; border-bottom:1px solid rgba(255,255,255,.15); flex-wrap:wrap; }
-  #walletBar .bal { font-size:18px; font-weight:bold; color:#ffd54f; }
+    background:linear-gradient(180deg,rgba(24,48,20,.96),rgba(14,30,12,.94)); padding:10px 14px; border-bottom:2px solid rgba(255,213,79,.35); flex-wrap:wrap; backdrop-filter:blur(4px); }
+  #walletBar .bal { font-size:19px; font-weight:bold; color:#ffd54f; }
   #walletBar .spacer { flex:1; }
   #walletBar button { padding:6px 10px; font-size:14px; margin:0; }
   /* レース情報カード・距離選択 */
   .distChips { display:flex; gap:8px; flex-wrap:wrap; }
-  .distChips button { flex:1; min-width:96px; background:#37474f; }
-  .distChips button.sel { background:#2e7d32; outline:2px solid #ffd54f; }
-  .distChips button small { display:block; font-size:11px; opacity:.8; }
-  .modeBtns button { width:100%; font-size:18px; padding:14px; margin:6px 0; }
+  .distChips button { flex:1; min-width:96px; background:linear-gradient(180deg,#546e7a,#37474f); border-radius:14px; padding:12px 10px; }
+  .distChips button.sel { background:linear-gradient(180deg,#43a047,#2e7d32); outline:2px solid #ffd54f; }
+  .distChips button small { display:block; font-size:11px; opacity:.85; }
+  .modeBtns button { width:100%; font-size:17.5px; padding:15px 14px; margin:7px 0; border-radius:14px; }
   /* 馬選び（パドック風） */
   #previewWrap { background:linear-gradient(#87b5d9 62%, #5d8a3c 62%); border-radius:10px; overflow:hidden; }
   #previewCanvas { width:100%; height:220px; display:block; }
@@ -40,12 +48,19 @@
   .filterAxis, .filterVals { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
   .filterAxis button, .filterVals button { padding:6px 10px; font-size:13px; background:#37474f; margin:0; }
   .filterAxis button.sel, .filterVals button.sel { background:#2e7d32; outline:2px solid #ffd54f; }
-  .horseGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-  .horseCard { background:rgba(255,255,255,.07); border:2px solid transparent; border-radius:10px; padding:8px; cursor:pointer; font-size:13px; }
-  .horseCard.sel { border-color:#ffd54f; background:rgba(255,213,79,.12); }
+  .horseGrid { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+  .horseCard { position:relative; background:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,.05)); border:2px solid rgba(255,255,255,.16); border-radius:14px; padding:9px 10px 10px; cursor:pointer; font-size:13px; overflow:hidden; box-shadow:none; }
+  .horseCard.owned { border-left:6px solid #66bb6a; }
+  .horseCard.sel { border-color:#ffd54f; background:rgba(255,213,79,.14); }
   .horseCard .hn { font-weight:bold; font-size:14px; }
-  .horseCard.locked .hn { color:#cfd8dc; }
-  .horseCard .lockTag { color:#ffd54f; font-size:12px; }
+  /* 未解放: カード全体を暗く沈ませ、価格バッジだけ金色で目立たせる（一目で区別できるように） */
+  .horseCard.locked { background:linear-gradient(180deg,rgba(8,12,16,.55),rgba(8,12,16,.75)); border:2px dashed rgba(255,255,255,.30); }
+  .horseCard.locked.sel { border:2px solid #ffd54f; }
+  .horseCard.locked .hn { color:#b0bec5; }
+  .horseCard.locked .dim { opacity:.5; filter:saturate(.35); }
+  .horseCard .ownBadge { display:inline-block; margin-top:5px; background:#2e7d32; color:#e8f5e9; font-size:11.5px; font-weight:900; border-radius:999px; padding:2px 9px; }
+  .horseCard .priceBadge { display:inline-block; margin-top:5px; background:linear-gradient(180deg,#ffd54f,#ffb300); color:#4e342e; font-size:12.5px; font-weight:900; border-radius:999px; padding:3px 10px; box-shadow:0 2px 6px rgba(0,0,0,.35); }
+  .lockTag { color:#ffd54f; font-size:12.5px; font-weight:700; }
   table { width:100%; border-collapse:collapse; }
   td, th { padding:6px; border-bottom:1px solid rgba(255,255,255,.15); text-align:left; }
   /* 設定モーダル */
@@ -207,7 +222,7 @@
 </div>
 
 <div class="panel hidden" id="screenHome">
-  <h1>ホーム</h1>
+  <h1>🏠 ホーム</h1>
   <div class="card" id="raceInfoCard">
     <div style="font-size:13px;opacity:.85">次のレース</div>
     <div style="font-size:18px;font-weight:bold"><span id="rcName">中距離チャンピオンシップ</span><span class="g1-badge" id="rcG1" style="display:none">G1</span></div>
@@ -424,6 +439,11 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 'use strict';
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+/* iOS対策: 操作要素の長押しで「コピー」等のコールアウトメニューを出さない
+   （CSSの user-select:none / -webkit-touch-callout:none と併用） */
+document.addEventListener('contextmenu', e => {
+  if (e.target.closest && e.target.closest('button, .horseCard, #raceWrap, .distChips, .filterAxis, .filterVals, #walletBar')) e.preventDefault();
+});
 let token = localStorage.getItem('km_token') || '';
 let profile = null, horses = [], ws = null, myName = '';
 let roomState = null;
@@ -749,10 +769,11 @@ function renderPicker() {
   $('pkEmpty').classList.toggle('hidden', list.length > 0);
   $('pkGrid').innerHTML = list.map(x => {
     const un = profile.unlocked.includes(x.id);
-    return `<div class="horseCard ${x.id === selectedHorseId ? 'sel' : ''} ${un ? '' : 'locked'}" data-id="${x.id}">
+    return `<div class="horseCard ${x.id === selectedHorseId ? 'sel' : ''} ${un ? 'owned' : 'locked'}" data-id="${x.id}">
       <div class="hn">${un ? '' : '🔒 '}${x.name}</div>
-      <div><span class="chip style">${x.style}</span><span class="chip">${aptLabelOf(x)}</span></div>
-      <div>${un ? '解放済み' : `<span class="lockTag">${x.price.toLocaleString()}G</span>`} ／ 評価 ${x.rating}</div>
+      <div class="dim"><span class="chip style">${x.style}</span><span class="chip">${aptLabelOf(x)}</span></div>
+      <div class="dim">評価 ${x.rating}</div>
+      ${un ? '<span class="ownBadge">✓ 解放済み</span>' : `<span class="priceBadge">🔒 ${x.price.toLocaleString()}G で解放</span>`}
     </div>`;
   }).join('');
   $('pkGrid').querySelectorAll('.horseCard').forEach(c => c.onclick = () => {
@@ -1335,6 +1356,184 @@ function noiseTexture(base, flecks, n = 2600) {
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
+/* ---- 写真風キャンバステクスチャ（1人用 keiba-engine の生成法を移植） ---- */
+// 芝: 刈り目のストライプ2色＋日焼け・摩耗の斑＋葉1枚ずつのノイズで「芝生」に見せる
+function makeGrassCanvas(stripeA, stripeB, patchCols, blades) {
+  const c = document.createElement('canvas'); c.width = c.height = 512;
+  const g = c.getContext('2d');
+  g.fillStyle = stripeA; g.fillRect(0, 0, 512, 512);
+  g.fillStyle = stripeB; g.fillRect(0, 0, 256, 512);
+  g.fillStyle = 'rgba(38,66,26,0.20)'; g.fillRect(254, 0, 3, 512); g.fillRect(510, 0, 2, 512);
+  g.fillStyle = 'rgba(220,238,190,0.10)'; g.fillRect(257, 0, 5, 512); g.fillRect(0, 0, 5, 512);
+  for (let pi = 0; pi < 340; pi++) {
+    g.fillStyle = patchCols[(Math.random() * patchCols.length) | 0];
+    g.globalAlpha = 0.05 + Math.random() * 0.10;
+    g.beginPath(); g.ellipse(Math.random() * 512, Math.random() * 512, 16 + Math.random() * 70, 10 + Math.random() * 44, Math.random() * 3, 0, 7); g.fill();
+  }
+  for (let wi = 0; wi < 130; wi++) {
+    g.fillStyle = Math.random() < 0.5 ? '#93a05c' : '#a8a468';
+    g.globalAlpha = 0.05 + Math.random() * 0.08;
+    g.beginPath(); g.ellipse(Math.random() * 512, Math.random() * 512, 5 + Math.random() * 20, 3 + Math.random() * 12, Math.random() * 3, 0, 7); g.fill();
+  }
+  g.globalAlpha = 1;
+  const cols = ['#446f2e', '#5c8a42', '#6f9c50', '#527f39', '#7fa85e', '#3e662b'];
+  for (let i = 0; i < blades; i++) {
+    g.fillStyle = cols[(Math.random() * cols.length) | 0];
+    g.globalAlpha = 0.22 + Math.random() * 0.42;
+    g.fillRect(Math.random() * 512, Math.random() * 512, 1.4, 2.4 + Math.random() * 2.4);
+  }
+  g.globalAlpha = 1;
+  return c;
+}
+let grassCanvasCache = null;
+function grassTexture(rx, ry) {
+  if (!grassCanvasCache) {
+    grassCanvasCache = makeGrassCanvas('#639349', '#4c7a35',
+      ['#6d9a52', '#4c7834', '#7a9a4e', '#5d8547', '#8a9a58', '#527a38'], 30000);
+  }
+  const t = new THREE.CanvasTexture(grassCanvasCache);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  return t;
+}
+// ダート: ほぼ白の下地（マテリアル色で馬場状態の色付けが効く）に、
+// 斑・内側の踏み荒らされた帯・ハロー目・轍・蹄跡・土塊を重ねる。
+// キャンバス x=進行方向（リボンの u）、y=横方向。UV v=0 が内側なので、
+// 踏み荒らし帯と蹄跡の密集はキャンバス下端（y=512側）に寄せる。
+function makeDirtCanvas() {
+  const c = document.createElement('canvas'); c.width = c.height = 512;
+  const g = c.getContext('2d'); g.fillStyle = '#ece5d8'; g.fillRect(0, 0, 512, 512);
+  for (let pi = 0; pi < 130; pi++) {
+    const dark = Math.random() < 0.55;
+    g.fillStyle = dark ? 'rgba(122,96,64,' + (0.04 + Math.random() * 0.07) + ')' : 'rgba(255,250,238,' + (0.04 + Math.random() * 0.06) + ')';
+    g.beginPath(); g.ellipse(Math.random() * 512, Math.random() * 512, 26 + Math.random() * 90, 16 + Math.random() * 54, Math.random() * 0.6 - 0.3, 0, 7); g.fill();
+  }
+  const band = g.createLinearGradient(0, 0, 0, 512);
+  band.addColorStop(0, 'rgba(255,248,232,0.05)'); band.addColorStop(0.38, 'rgba(104,80,52,0.04)');
+  band.addColorStop(0.62, 'rgba(104,80,52,0.15)'); band.addColorStop(1, 'rgba(104,80,52,0.20)');
+  g.fillStyle = band; g.fillRect(0, 0, 512, 512);
+  for (let hy = 2; hy < 512; hy += 5) {
+    g.fillStyle = 'rgba(110,86,56,' + (0.05 + Math.random() * 0.05) + ')'; g.fillRect(0, hy, 512, 1.1);
+    g.fillStyle = 'rgba(255,250,240,' + (0.04 + Math.random() * 0.04) + ')'; g.fillRect(0, hy + 2.4, 512, 1);
+  }
+  for (let si = 0; si < 300; si++) { g.fillStyle = 'rgba(92,68,42,' + (0.05 + Math.random() * 0.11) + ')';
+    g.fillRect(Math.random() * 430, Math.random() * 512, 30 + Math.random() * 82, 1 + Math.random() * 2.6); }
+  for (let sj = 0; sj < 130; sj++) { g.fillStyle = 'rgba(255,246,228,' + (0.05 + Math.random() * 0.08) + ')';
+    g.fillRect(Math.random() * 430, Math.random() * 512, 22 + Math.random() * 60, 1 + Math.random() * 2); }
+  function hoof(x, y, s, a) {
+    g.save(); g.translate(x, y); g.rotate(a); g.scale(s, s);
+    g.strokeStyle = 'rgba(84,62,38,0.5)'; g.lineWidth = 2.1;
+    g.beginPath(); g.arc(0, 0, 4.6, Math.PI * 0.95, Math.PI * 2.05); g.stroke();
+    g.fillStyle = 'rgba(96,74,46,0.30)';
+    g.beginPath(); g.ellipse(0, 0.6, 3.6, 4.4, 0, 0, 7); g.fill();
+    g.fillStyle = 'rgba(255,248,234,0.20)';
+    g.beginPath(); g.ellipse(0, -1.4, 2.4, 1.8, 0, 0, 7); g.fill();
+    g.restore();
+  }
+  for (let hi = 0; hi < 620; hi++) {
+    const onLine = Math.random() < 0.62;
+    const hx = Math.random() * 512, hy2 = onLine ? 512 - Math.pow(Math.random(), 1.5) * 300 : Math.random() * 512;
+    hoof(hx, hy2, 0.75 + Math.random() * 0.6, (Math.random() - 0.5) * 0.5);
+  }
+  for (let j = 0; j < 26000; j++) { const d = Math.random();
+    g.fillStyle = d < 0.52 ? 'rgba(102,78,52,' + (0.10 + Math.random() * 0.26) + ')' : 'rgba(255,250,240,' + (0.09 + Math.random() * 0.22) + ')';
+    g.fillRect(Math.random() * 512, Math.random() * 512, 1.7, 1.7); }
+  for (let cj = 0; cj < 900; cj++) { const cv = 96 + ((Math.random() * 60) | 0);
+    g.fillStyle = 'rgba(' + cv + ',' + (cv - 18) + ',' + (cv - 42) + ',' + (0.25 + Math.random() * 0.3) + ')';
+    g.beginPath(); g.ellipse(Math.random() * 512, Math.random() * 512, 1.6 + Math.random() * 2.6, 1.2 + Math.random() * 1.8, Math.random() * 3, 0, 7); g.fill(); }
+  return c;
+}
+// ダートのバンプ（凹凸）: 色は付けず、斜光で踏み跡が浮くようにする
+function makeDirtBumpCanvas() {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d'); g.fillStyle = '#808080'; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 5200; i++) { const v = 88 + ((Math.random() * 84) | 0);
+    g.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
+    g.beginPath(); g.ellipse(Math.random() * 256, Math.random() * 256, 1.4 + Math.random() * 3.6, 1 + Math.random() * 2.2, Math.random() * 3, 0, 7); g.fill(); }
+  for (let s = 0; s < 210; s++) { const v2 = 70 + ((Math.random() * 50) | 0);
+    g.strokeStyle = 'rgba(' + v2 + ',' + v2 + ',' + v2 + ',0.55)'; g.lineWidth = 1.6;
+    const x = Math.random() * 256, y = Math.random() * 256;
+    g.beginPath(); g.arc(x, y, 3.4 + Math.random() * 2, Math.PI * 0.95, Math.PI * 2.05); g.stroke(); }
+  return c;
+}
+// スタンドの観客: 実物は落ち着いたグレーの塊に見えるので、彩度を抑えたドットで表現（1人用と同方針）
+function crowdTexture() {
+  const cc = document.createElement('canvas'); cc.width = 512; cc.height = 128;
+  const cg = cc.getContext('2d');
+  const bgGrad = cg.createLinearGradient(0, 0, 0, 128);
+  bgGrad.addColorStop(0, '#565d63'); bgGrad.addColorStop(0.75, '#454b51'); bgGrad.addColorStop(1, '#383e44');
+  cg.fillStyle = bgGrad; cg.fillRect(0, 0, 512, 128);
+  for (let ry = 10; ry < 128; ry += 11) { cg.fillStyle = 'rgba(20,24,28,0.35)'; cg.fillRect(0, ry, 512, 2); }
+  const cols = ['#8d9299', '#7c8288', '#9aa0a4', '#6e747b', '#a39a8b', '#8b8578', '#75808a', '#94908a', '#5f6a72', '#a8a49a'];
+  const accent = ['#7d6a5a', '#6d7a6a', '#7a6d7d', '#6a7a84', '#84755e'];
+  for (let i = 0; i < 5200; i++) {
+    const useAccent = Math.random() < 0.10;
+    cg.fillStyle = useAccent ? accent[(Math.random() * accent.length) | 0] : cols[(Math.random() * cols.length) | 0];
+    cg.globalAlpha = 0.55 + Math.random() * 0.4;
+    const px = Math.random() * 510, py = 4 + Math.random() * 118;
+    cg.fillRect(px, py, 2.6, 3.6);
+    cg.fillStyle = 'rgba(196,164,138,0.85)';
+    cg.fillRect(px + 0.5, py - 1.8, 1.7, 1.8);
+  }
+  cg.globalAlpha = 1;
+  const ct = new THREE.CanvasTexture(cc); ct.colorSpace = THREE.SRGBColorSpace; ct.anisotropy = 4; return ct;
+}
+// スタンドの横断幕（1人用と同デザイン）
+function bannerTexture() {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 64;
+  const g = c.getContext('2d');
+  const panels = [['#274b63', '競 馬 場'], ['#7a2e2a', 'がんばれ'], ['#2e5d43', '2000m'], ['#5d5327', '名馬たちの祭典'], ['#274b63', 'ようこそ'], ['#7a2e2a', 'がんばれ'], ['#2e5d43', '競 馬 場'], ['#5d5327', '2000m']];
+  for (let i = 0; i < panels.length; i++) {
+    g.fillStyle = panels[i][0]; g.fillRect(i * 128, 0, 128, 64);
+    g.fillStyle = 'rgba(255,255,255,0.16)'; g.fillRect(i * 128, 0, 128, 7);
+    g.fillStyle = 'rgba(0,0,0,0.20)'; g.fillRect(i * 128, 55, 128, 9);
+    g.fillStyle = '#f2eee2'; g.font = '900 25px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(panels[i][1], i * 128 + 64, 34);
+    g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(i * 128 + 126, 0, 2, 64);
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  t.wrapS = THREE.RepeatWrapping;
+  return t;
+}
+// スタンドのガラス面: 空の映り込みグラデーション＋斜めの光条（1人用と同デザイン）
+function glassTexture() {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 64);
+  grad.addColorStop(0, '#cfe4ee'); grad.addColorStop(0.45, '#8fb2c4'); grad.addColorStop(1, '#5d7f94');
+  g.fillStyle = grad; g.fillRect(0, 0, 256, 64);
+  g.fillStyle = 'rgba(255,255,255,0.20)';
+  for (let i = 0; i < 5; i++) { g.save(); g.translate(i * 58 - 20, 0); g.rotate(0.5); g.fillRect(0, -14, 13, 96); g.restore(); }
+  g.fillStyle = 'rgba(30,44,54,0.5)';
+  for (let mx = 0; mx <= 256; mx += 32) g.fillRect(mx, 0, 2, 64);
+  g.fillRect(0, 30, 256, 2.4);
+  const t = new THREE.CanvasTexture(c); t.wrapS = THREE.RepeatWrapping; t.repeat.set(7, 1);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+}
+// 建物の外壁: コンクリートの質感＋窓グリッド＋雨垂れ（1人用 facadeTex を移植）
+function facadeTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#d3ccbd'; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 9000; i++) { const v = 170 + ((Math.random() * 70) | 0);
+    g.fillStyle = 'rgba(' + v + ',' + (v - 6) + ',' + (v - 22) + ',' + (0.12 + Math.random() * 0.2) + ')';
+    g.fillRect(Math.random() * 256, Math.random() * 256, 1.6, 1.6); }
+  for (let p = 0; p < 26; p++) { g.fillStyle = 'rgba(120,112,96,' + (0.04 + Math.random() * 0.06) + ')';
+    g.beginPath(); g.ellipse(Math.random() * 256, Math.random() * 256, 16 + Math.random() * 40, 10 + Math.random() * 26, 0, 0, 7); g.fill(); }
+  for (let ry = 0; ry < 5; ry++) for (let rx = 0; rx < 8; rx++) {
+    const gl = 0.35 + Math.random() * 0.4;
+    g.fillStyle = 'rgba(' + (40 + gl * 60 | 0) + ',' + (70 + gl * 70 | 0) + ',' + (88 + gl * 80 | 0) + ',0.92)';
+    g.fillRect(10 + rx * 30, 16 + ry * 46, 21, 30);
+    g.fillStyle = 'rgba(255,255,255,0.20)'; g.fillRect(10 + rx * 30, 16 + ry * 46, 21, 7);
+  }
+  for (let s = 0; s < 40; s++) { g.fillStyle = 'rgba(90,84,70,' + (0.05 + Math.random() * 0.09) + ')';
+    const sx = Math.random() * 256; g.fillRect(sx, 40 + Math.random() * 120, 2.2, 40 + Math.random() * 70); }
+  g.fillStyle = 'rgba(96,90,76,0.35)'; g.fillRect(0, 238, 256, 18);
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(6, 1);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+}
 function ellipsePoint(t) { return { x: Math.cos(t) * A, z: Math.sin(t) * B }; }
 function ellipseNormal(t) {
   const nx = Math.cos(t) / A, nz = Math.sin(t) / B, l = Math.hypot(nx, nz);
@@ -1370,8 +1569,8 @@ class OffsetCurve extends THREE.Curve {
 }
 function buildRail(offset) {
   const grp = new THREE.Group();
-  const postMat = new THREE.MeshStandardMaterial({ color: 0xf4f4f4, roughness: 0.7 });
-  const railMat = new THREE.MeshStandardMaterial({ color: 0xf7f7f7, roughness: 0.5 });
+  const postMat = new THREE.MeshStandardMaterial({ color: 0xe8e8e6, roughness: 0.45, metalness: 0.35 });
+  const railMat = new THREE.MeshStandardMaterial({ color: 0xf2f2f0, roughness: 0.35, metalness: 0.45 });
   const count = 150;
   const posts = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.07, 0.07, 1.9, 6), postMat, count);
   const dummy = new THREE.Object3D();
@@ -1397,12 +1596,17 @@ function buildGrandstand() {
     mesh.position.set(x, y, z); mesh.castShadow = cast; mesh.receiveShadow = true;
     g.add(mesh); return mesh;
   };
-  add(new THREE.BoxGeometry(14, 3.2, 124), std(0xa8a294, 0.95), 218, 1.6, 0);              // 土台
+  add(new THREE.BoxGeometry(14, 3.2, 124), new THREE.MeshStandardMaterial({ map: facadeTexture(), roughness: 0.92 }), 218, 1.6, 0); // 土台（外壁テクスチャ）
   for (let i = 0; i < 5; i++) {                                                            // 観客席の段
     add(new THREE.BoxGeometry(4.6, 1.5, 122), std(i % 2 ? 0xcac4b6 : 0xd6d1c4, 0.95), 211.5 + i * 1.15, 3.95 + i * 1.5, 0);
   }
+  // 観客席の前面に観客テクスチャ（落ち着いたグレーの観衆）と、ガラス面に横断幕を重ねる（1人用と同じ見せ方）
+  const crowd = new THREE.Mesh(new THREE.PlaneGeometry(122, 5.2), new THREE.MeshBasicMaterial({ map: crowdTexture() }));
+  crowd.rotation.y = -Math.PI / 2; crowd.position.set(209.0, 5.9, 0); g.add(crowd);
   add(new THREE.BoxGeometry(0.3, 0.9, 124), std(0x8c2f26, 0.7), 209.6, 8.6, 0);            // 赤い帯（ファシア）
-  add(new THREE.BoxGeometry(0.3, 2.4, 104), std(0x86b8cc, 0.3, 0.5), 209.7, 10.6, 0);      // ガラス面
+  add(new THREE.BoxGeometry(0.3, 2.4, 104), new THREE.MeshStandardMaterial({ map: glassTexture(), roughness: 0.22, metalness: 0.35 }), 209.7, 10.6, 0); // ガラス面（空の映り込み）
+  const ban = new THREE.Mesh(new THREE.PlaneGeometry(112, 1.6), new THREE.MeshBasicMaterial({ map: bannerTexture() }));
+  ban.rotation.y = -Math.PI / 2; ban.position.set(209.48, 10.6, 0); g.add(ban);
   add(new THREE.BoxGeometry(21.3, 0.2, 126), std(0xd8d2c4, 0.6), 217, 13.05, 0);           // 屋根トリム
   add(new THREE.BoxGeometry(21, 0.45, 124), std(0x74443c, 0.72), 217, 13.35, 0);           // 屋根
   for (let z = -54; z <= 54; z += 13.5) {                                                  // 柱
@@ -1458,18 +1662,19 @@ function initThree() {
   sunLight.shadow.bias = -0.0004; sunLight.shadow.normalBias = 0.03;
   scene.add(sunLight); scene.add(sunLight.target);
   const fill = new THREE.DirectionalLight(0xdfeaf2, 0.12); fill.position.set(-90, 50, -70); scene.add(fill);
-  // 地面: 外周の芝（1人用の色味）
-  const grassTex = noiseTexture('#8ba16d', ['#7c915f', '#99ad79', '#72875a']);
-  grassTex.repeat.set(60, 60);
-  const ground = new THREE.Mesh(new THREE.CircleGeometry(1460, 48), new THREE.MeshStandardMaterial({ map: grassTex, color: 0xb9bdb0, roughness: 1 }));
+  // 地面: 外周の芝（1人用の刈り目ストライプ芝テクスチャ）
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(1460, 48), new THREE.MeshStandardMaterial({ map: grassTexture(90, 90), color: 0xc9ccc0, roughness: 1 }));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -0.03; ground.receiveShadow = true; scene.add(ground);
   // 内馬場の芝
-  const infield = new THREE.Mesh(new THREE.CircleGeometry(1, 64), new THREE.MeshStandardMaterial({ map: grassTex, color: 0xc4c9ba, roughness: 1 }));
+  const infield = new THREE.Mesh(new THREE.CircleGeometry(1, 64), new THREE.MeshStandardMaterial({ map: grassTexture(46, 46), color: 0xd8dbce, roughness: 1 }));
   infield.rotation.x = -Math.PI / 2; infield.scale.set(A - 12.5, B - 12.5, 1); infield.position.y = 0.0; infield.receiveShadow = true; scene.add(infield);
-  // ダートコース（1人用の土色＋粒テクスチャ）
-  const dirtTex = noiseTexture('#c9b489', ['#b39b72', '#d6c096', '#a68d64']);
-  dirtMatRef = new THREE.MeshStandardMaterial({ map: dirtTex, color: 0xd8c6a2, roughness: 1 });
-  const dirt = ribbon(0, 23.4, 0.02, dirtMatRef);
+  // ダートコース（1人用の写真風ダート: 蹄跡・ハロー目・踏み荒らし帯＋バンプで凹凸感）
+  const dirtTex = new THREE.CanvasTexture(makeDirtCanvas());
+  dirtTex.wrapS = dirtTex.wrapT = THREE.RepeatWrapping; dirtTex.colorSpace = THREE.SRGBColorSpace; dirtTex.anisotropy = 8;
+  const dirtBumpTex = new THREE.CanvasTexture(makeDirtBumpCanvas());
+  dirtBumpTex.wrapS = dirtBumpTex.wrapT = THREE.RepeatWrapping;
+  dirtMatRef = new THREE.MeshStandardMaterial({ map: dirtTex, bumpMap: dirtBumpTex, bumpScale: 0.9, color: 0xd8c6a2, roughness: 1 });
+  const dirt = ribbon(0, 23.4, 0.02, dirtMatRef, 18);
   scene.add(dirt);
   // コース両端の白線
   const lineMat = new THREE.MeshStandardMaterial({ color: 0xf5f2e8, roughness: 1 });
@@ -1510,6 +1715,7 @@ let flashDone = false, photoShownAt = 0, photoActive = false;
 let replayFrames = [], replayAcc = 0, replayOrder = [];
 let replayMode = false, replayT = 0, replaySpeed = 1, replayLast = 0;
 let gateGroup = null, gateDoors = [], gateTow = 0, dirtMatRef = null;
+let gateDoorOpen = 0, gateDoorTarget = 0; // 前扉の開き具合 0=閉 → 1=全開（1人用と同じ0.45秒で開く）
 let watchFocusNick = null; // 観戦HUDの対象（買い目の馬 or 先頭）
 const WHIP_MAX = 3;
 const STYLE_KEY = { '逃げ': 'nige', '先行': 'senko', '差し': 'sashi', '追込': 'oikomi' };
@@ -1682,53 +1888,111 @@ function buildGate() {
   if (gateGroup || !scene) return;
   gateGroup = new THREE.Group();
   gateDoors = [];
-  const frameMat = new THREE.MeshStandardMaterial({ color: 0x2e7d32, roughness: 0.6, metalness: 0.25 });
-  const barMat = new THREE.MeshStandardMaterial({ color: 0xd8dde2, roughness: 0.4, metalness: 0.6 });
-  const numMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  for (let i = 0; i < 18; i++) {
-    const stall = new THREE.Group();
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.09, 2.5, 0.09), frameMat);
-    post.position.set(-LANE_W / 2, 1.25, 0); stall.add(post);
-    const post2 = post.clone(); post2.position.x = LANE_W / 2; stall.add(post2);
-    const top = new THREE.Mesh(new THREE.BoxGeometry(LANE_W + 0.1, 0.12, 0.12), frameMat);
-    top.position.set(0, 2.5, 0); stall.add(top);
-    const door = new THREE.Group();
-    for (let b = 0; b < 4; b++) {
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(LANE_W - 0.06, 0.09, 0.04), barMat);
-      bar.position.set(0, 0.45 + b * 0.5, 0); door.add(bar);
+  /* 1人用 buildStartGate と同じ寸法・材質の本格ゲート:
+     仕切り壁（全長）＋両開きの前扉（ヒンジ付き・バー入り）＋後方のバーゲート
+     ＋前扉の上の番号札＋天井フレームと屋根＋牽引用ホイール。
+     ローカル座標は進行方向が +z: 前扉 z=+2.3、後方ゲート z=-2.3、
+     馬は仕切りの中央（z=0＝スタートライン）に立つ。 */
+  const steel = new THREE.MeshStandardMaterial({ color: 0x9aa39c, roughness: 0.36, metalness: 0.72 });
+  const paint = new THREE.MeshStandardMaterial({ color: 0x2f6b46, roughness: 0.46, metalness: 0.35 });
+  const paintD = new THREE.MeshStandardMaterial({ color: 0x224f35, roughness: 0.52, metalness: 0.3 });
+  const roofM = new THREE.MeshStandardMaterial({ color: 0xb9beb2, roughness: 0.55, metalness: 0.45 });
+  const darkM = new THREE.MeshStandardMaterial({ color: 0x26282a, roughness: 0.62, metalness: 0.4 });
+  const totalW = LANE_W * 18, x0 = -totalW / 2, frontZ = 2.3, backZ = -2.3, wallH = 2.35;
+  const box = (w, h, d, m, x, y, z, parent) => {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+    b.position.set(x, y, z); b.castShadow = true; b.receiveShadow = true;
+    (parent || gateGroup).add(b); return b;
+  };
+  // 仕切り壁（19枚）と両端の鋼柱・斜めブレース
+  for (let bi = 0; bi <= 18; bi++) {
+    const bx = x0 + bi * LANE_W;
+    box(0.07, wallH, frontZ - backZ, bi % 2 ? paint : paintD, bx, wallH / 2, 0);
+    box(0.17, 2.95, 0.17, steel, bx, 1.47, frontZ);
+    box(0.17, 2.95, 0.17, steel, bx, 1.47, backZ);
+    const brace = box(0.05, 1.5, 0.05, steel, bx, 1.15, 0);
+    brace.rotation.x = 0.72;
+  }
+  // 各馬房: 前扉（両開き）・後方バーゲート・番号札
+  for (let si = 0; si < 18; si++) {
+    const cx = x0 + (si + 0.5) * LANE_W, dw = LANE_W / 2 - 0.05;
+    [-1, 1].forEach(sd => {
+      const pivot = new THREE.Group();
+      pivot.position.set(cx + sd * (LANE_W / 2 - 0.02), 0, frontZ);
+      // 進行方向が +z のため開く向きの符号は1人用（-z向き）と鏡像になる
+      pivot.userData.dir = sd;
+      gateGroup.add(pivot); gateDoors.push(pivot);
+      const co = -sd * dw / 2; // パネル中心（ヒンジから馬房中央側へ）
+      box(dw, 0.10, 0.06, paint, co, 2.04, 0, pivot);  // 上枠
+      box(dw, 0.10, 0.06, paint, co, 0.52, 0, pivot);  // 下枠
+      box(dw, 0.07, 0.05, steel, co, 1.28, 0, pivot);  // 中枠
+      box(0.07, 2.06, 0.06, paint, co - sd * (dw / 2 - 0.035), 1.28, 0, pivot); // 合わせ目
+      for (let vb = 0; vb < 3; vb++) {
+        box(0.045, 1.44, 0.045, steel, co - dw / 2 + dw * (vb + 0.5) / 3, 1.28, 0, pivot); // 縦バー
+      }
+    });
+    // 後方ゲート（馬が後ろから入るバー扉）
+    box(LANE_W - 0.1, 0.09, 0.06, paintD, cx, 1.98, backZ);
+    box(LANE_W - 0.1, 0.09, 0.06, paintD, cx, 0.5, backZ);
+    box(LANE_W - 0.1, 0.06, 0.05, steel, cx, 1.24, backZ);
+    for (let rb = 0; rb < 4; rb++) {
+      box(0.045, 1.4, 0.045, steel, cx - LANE_W / 2 + LANE_W * (rb + 0.5) / 4, 1.24, backZ);
     }
+    // 番号札（前扉の上、前向き）＋裏板
+    box(0.6, 0.6, 0.05, darkM, cx, 2.68, frontZ + 0.02);
     const numCv = document.createElement('canvas'); numCv.width = 64; numCv.height = 64;
     const ng = numCv.getContext('2d');
     ng.fillStyle = '#1565c0'; ng.fillRect(0, 0, 64, 64);
     ng.fillStyle = '#fff'; ng.font = '900 40px sans-serif'; ng.textAlign = 'center'; ng.textBaseline = 'middle';
-    ng.fillText(String(i + 1), 32, 34);
-    const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.5), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(numCv) }));
-    plate.position.set(0, 2.85, 0); stall.add(plate);
-    door.position.set(-LANE_W / 2, 0, 1.05);
-    door.userData.closedRot = 0;
-    stall.add(door);
-    gateDoors.push(door);
-    stall.position.x = (i - 8.5) * LANE_W;
-    gateGroup.add(stall);
+    ng.fillText(String(si + 1), 32, 34);
+    const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.54, 0.54), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(numCv) }));
+    plate.position.set(cx, 2.68, frontZ + 0.06); gateGroup.add(plate);
   }
+  // 天井フレーム＋屋根
+  box(totalW + 0.5, 0.3, 0.26, paint, 0, 3.02, frontZ);
+  box(totalW + 0.5, 0.3, 0.26, paint, 0, 3.02, backZ);
+  box(0.26, 0.3, frontZ - backZ + 0.3, paint, x0 - 0.1, 3.02, 0);
+  box(0.26, 0.3, frontZ - backZ + 0.3, paint, -x0 + 0.1, 3.02, 0);
+  for (let ji = 0; ji <= 6; ji++) box(0.14, 0.16, frontZ - backZ + 0.4, steel, x0 + totalW * ji / 6, 3.2, 0);
+  const roof = box(totalW + 1.3, 0.09, frontZ - backZ + 1.5, roofM, 0, 3.34, 0);
+  roof.rotation.x = 0.035;
+  // 牽引用ホイール（本物同様トレーラー構造）
+  [-1, 1].forEach(sx => {
+    [frontZ - 0.5, backZ + 0.5].forEach(wz => {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.46, 0.24, 18), darkM);
+      wheel.rotation.z = Math.PI / 2; wheel.position.set(sx * (totalW / 2 + 0.28), 0.46, wz);
+      wheel.castShadow = true; gateGroup.add(wheel);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.27, 12), steel);
+      hub.rotation.z = Math.PI / 2; hub.position.copy(wheel.position); gateGroup.add(hub);
+    });
+  });
   scene.add(gateGroup);
   positionGate();
 }
 function positionGate() {
   if (!gateGroup) return;
-  const p = trackPoint(-1.3, 8.5);
+  // ゲート中心＝スタートライン（dist 0）。馬は各仕切りの中央に立ち、
+  // 前扉は馬の頭の約2.3m前方に来る（1人用と同じ配置）
+  const p = trackPoint(0, 8.5);
   gateGroup.position.set(p.x, 0, p.z);
   gateGroup.rotation.y = Math.atan2(p.dx, p.dz);
   gateGroup.visible = true;
-  gateTow = 0;
+  gateTow = 0; gateDoorOpen = 0; gateDoorTarget = 0;
   gateDoors.forEach(d => { d.rotation.y = 0; });
 }
-function openGateDoors() { gateDoors.forEach(d => { d.rotation.y = -1.9; }); }
+function openGateDoors() { gateDoorTarget = 1; }
+function updateGateDoors(dt) {
+  // 発走と同時に前扉が0.45秒で両開きに開く（1人用と同じ）
+  if (gateDoorOpen === gateDoorTarget) return;
+  gateDoorOpen = Math.min(1, gateDoorOpen + dt / 0.45);
+  const a = gateDoorOpen * 1.82;
+  gateDoors.forEach(d => { d.rotation.y = d.userData.dir * a; });
+}
 function towGate(dt) {
-  // 発走後、ゲートはコース外（内側後方）へ退場する（1人用と同じ考え方）
-  if (!gateGroup || !racing || gateTow >= 1) return;
+  // 発走後、馬群が抜けてからゲートは後方＋内側（コース外）へ退場する（1人用と同じ考え方）
+  if (!gateGroup || !racing || gateTow >= 1 || raceClock < 2) return;
   gateTow = Math.min(1, gateTow + dt / 14);
-  const back = -1.3 - gateTow * 46;
+  const back = -gateTow * 46;
   const p = trackPoint(back, 8.5);
   const inw = 1 - gateTow * 0.35;
   gateGroup.position.set(p.x * inw, 0, p.z * inw);
@@ -2142,6 +2406,7 @@ function raceLoop(now) {
     r.animSpeed = dt > 0 ? (r.smoothDist - prev) / dt : 0;
   });
   recordReplay(dt);
+  updateGateDoors(dt);
   towGate(dt);
   updateMeshes(dt);
   if (watchMode) updateWatchCamera(dt); else updateCamera(dt);
