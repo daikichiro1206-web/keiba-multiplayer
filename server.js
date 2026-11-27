@@ -676,6 +676,33 @@ function stepNpc(room, view, n, dt, now) {
   if ((n.lat <= -LAT_MAX_S && n.latVel < 0) || (n.lat >= LAT_MAX_S && n.latVel > 0)) n.latVel = 0;
 }
 
+/* 馬同士のセパレーション（1人用 checkInterference の物理分離をサーバーへ移植）。
+   1人用では全馬ペアが相互に押し合うが、ここでは人間の横位置はクライアントが
+   決めるため、人間には適用せず NPC 側にだけ押し出し＋進路ドリフトを効かせる
+   （NPC同士は相互）。これが無いと、内をホームにするNPCが人間に寄せ続けて
+   内ラチとの間に挟み、クライアント側の一方的な押し出しだけでは抜け出せない
+   「壁」感覚になっていた。定数は1人用と同一: 接触域 2.9m × 1.04m、
+   押し出し 1.6（latVel クランプ ±2.2）、進路ドリフト 1.4、並走時の速度
+   ブレンド（NPC同士のみ、1人用は raceTime>3.5 で有効）。 */
+function separateRunners(room, view, dt) {
+  for (let i = 0; i < view.length; i++) for (let j = i + 1; j < view.length; j++) {
+    const a = view[i], b = view[j];
+    if (a.human && b.human) continue;
+    if (a.finished || b.finished) continue;
+    const dd = b.dist - a.dist, ld = b.lat - a.lat;
+    if (Math.abs(dd) >= 2.9 || Math.abs(ld) >= 1.04) continue;
+    const dir = ld === 0 ? (j % 2 ? 1 : -1) : Math.sign(ld);
+    const fade = (1 - Math.abs(dd) / 2.9) * ((1.04 - Math.abs(ld)) / 1.04);
+    const pushV = dir * fade * 1.6 * dt, drift = dir * fade * 1.4 * dt;
+    if (!a.human) { a.latVel = clampN(a.latVel - pushV, -2.2, 2.2); a.targetLat = clampN(a.targetLat - drift, -LAT_MAX_S, LAT_MAX_S); }
+    if (!b.human) { b.latVel = clampN(b.latVel + pushV, -2.2, 2.2); b.targetLat = clampN(b.targetLat + drift, -LAT_MAX_S, LAT_MAX_S); }
+    if (!a.human && !b.human && Math.abs(ld) < 0.55 && room.raceClock > 3.5) {
+      const avg = (a.speed + b.speed) / 2, blend = Math.min(1, dt * 2.5) * 0.5;
+      a.speed += (avg - a.speed) * blend; b.speed += (avg - b.speed) * blend;
+    }
+  }
+}
+
 function buildField(room) {
   const L = room.raceDist || 2000;
   room.going = CAT.rollGoing(); // 馬場は開催ごとに抽選（1人用 pickGoing と同じ比率）
@@ -788,6 +815,7 @@ function tickNpcs(room, dt, now) {
     room.paceHeat += (0.55 - room.paceHeat) * Math.min(1, dt * 0.5);
   }
   for (const n of room.npcs) stepNpc(room, view, n, dt, now);
+  separateRunners(room, view, dt);
 }
 function allPositions(room) {
   const humans = room.mode === 'watch' ? [] : [...room.members.values()].map(m => ({
