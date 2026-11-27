@@ -811,9 +811,10 @@ function initPreview() {
   if (pvRenderer) { updatePreviewHorse(); return; }
   const canvas = $('previewCanvas');
   pvRenderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  pvRenderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2)); // 1人用プレビューと同値（旧: 未設定=1でRetinaでぼやけていた）
   pvRenderer.setSize(canvas.clientWidth || 640, 220, false);
   pvRenderer.toneMapping = THREE.ACESFilmicToneMapping;
-  pvRenderer.toneMappingExposure = 0.95; // プレビューは1人用プレビューと同値
+  pvRenderer.toneMappingExposure = 1.06; // レース側の色味調整（フェーズ15）に合わせる
   pvScene = new THREE.Scene();
   pvScene.background = new THREE.Color(0xa7bccf);
   pvCamera = new THREE.PerspectiveCamera(45, (canvas.clientWidth || 640) / 220, 0.1, 100);
@@ -1112,10 +1113,12 @@ let horseTemplate = null; // { scene, animations }
 let riderTemplate = null; // { scene }
 const modelReady = (async () => {
   const loader = new GLTFLoader();
-  const hp = loader.loadAsync('assets/bay-horse.glb')
+  // アセットにはバージョンクエリを付け、モデル差し替えが実機に確実に届くようにする
+  // （サーバーは ?v= 付きURLに immutable 長期キャッシュ、それ以外は no-cache を返す）
+  const hp = loader.loadAsync('assets/bay-horse.glb?v=15')
     .then(g => { horseTemplate = { scene: g.scene, animations: g.animations }; })
     .catch(e => console.warn('horse GLB load failed:', e));
-  const rp = loader.loadAsync('assets/rider.glb')
+  const rp = loader.loadAsync('assets/rider.glb?v=15')
     .then(g => { riderTemplate = { scene: g.scene }; })
     .catch(e => console.warn('rider GLB load failed:', e));
   await Promise.all([hp, rp]);
@@ -1586,6 +1589,17 @@ function facadeTexture() {
   t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   return t;
 }
+let _glowTexCache = null;
+function glowTexture() { // 昼間の淡いハロー用ラジアルグラデーション（1人用 glowTex を移植）
+  if (_glowTexCache) return _glowTexCache;
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(64, 64, 4, 64, 64, 62);
+  gr.addColorStop(0, 'rgba(255,246,214,0.9)'); gr.addColorStop(0.35, 'rgba(255,240,200,0.32)'); gr.addColorStop(1, 'rgba(255,240,200,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  _glowTexCache = new THREE.CanvasTexture(c);
+  return _glowTexCache;
+}
 function ellipsePoint(t) { return { x: Math.cos(t) * A, z: Math.sin(t) * B }; }
 function ellipseNormal(t) {
   const nx = Math.cos(t) / A, nz = Math.sin(t) / B, l = Math.hypot(nx, nz);
@@ -1621,10 +1635,13 @@ class OffsetCurve extends THREE.Curve {
 }
 function buildRail(offset) {
   const grp = new THREE.Group();
-  const postMat = new THREE.MeshStandardMaterial({ color: 0xe8e8e6, roughness: 0.45, metalness: 0.35 });
-  const railMat = new THREE.MeshStandardMaterial({ color: 0xf2f2f0, roughness: 0.35, metalness: 0.45 });
-  const count = 150;
-  const posts = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.07, 0.07, 1.9, 6), postMat, count);
+  // 白ラチ: 金属度を下げて白を立たせる（旧: metalness 0.35〜0.45 で環境反射が無く
+  // 暗いグレーに沈み、細い線にしか見えなかった）。支柱は密に、レールは太くして
+  // 実物のJRAラチ（白・支柱間隔 約3.6m・2段レール＋下段）の連続感を出す。
+  const postMat = new THREE.MeshStandardMaterial({ color: 0xf2f3f0, roughness: 0.5, metalness: 0.06 });
+  const railMat = new THREE.MeshStandardMaterial({ color: 0xf7f8f6, roughness: 0.42, metalness: 0.08 });
+  const count = 380;
+  const posts = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.075, 0.075, 1.9, 7), postMat, count);
   const dummy = new THREE.Object3D();
   for (let i = 0; i < count; i++) {
     const p = new OffsetCurve(offset, 0).getPoint(i / count);
@@ -1633,8 +1650,8 @@ function buildRail(offset) {
   }
   posts.castShadow = true;
   grp.add(posts);
-  for (const h of [1.82, 1.15]) {
-    const tube = new THREE.Mesh(new THREE.TubeGeometry(new OffsetCurve(offset, h), 300, 0.04, 6, true), railMat);
+  for (const h of [1.82, 1.15, 0.55]) {
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(new OffsetCurve(offset, h), 360, 0.058, 8, true), railMat);
     grp.add(tube);
   }
   return grp;
@@ -1748,6 +1765,16 @@ function buildVenueDressing() {
     const g = new THREE.Group();
     const scr = new THREE.Mesh(new THREE.PlaneGeometry(30, 15), new THREE.MeshBasicMaterial({ map: ct }));
     scr.position.set(0, 10, 0.7); g.add(scr);
+    // 画面下の情報テロップ帯（ターフビジョンらしい下部バンド）
+    const tc = document.createElement('canvas'); tc.width = 1024; tc.height = 64;
+    const tg = tc.getContext('2d'); tg.fillStyle = '#0d1622'; tg.fillRect(0, 0, 1024, 64);
+    tg.fillStyle = '#ffc21c'; tg.font = '900 34px sans-serif'; tg.textAlign = 'left';
+    tg.fillText('本日はご来場ありがとうございます', 24, 43);
+    tg.fillStyle = '#7ee0ff'; tg.textAlign = 'right';
+    tg.fillText('馬場状態 良', 1000, 43);
+    const tt = new THREE.CanvasTexture(tc); tt.colorSpace = THREE.SRGBColorSpace; tt.anisotropy = 4;
+    const ticker = new THREE.Mesh(new THREE.PlaneGeometry(30, 1.9), new THREE.MeshBasicMaterial({ map: tt }));
+    ticker.position.set(0, 3.45, 0.75); g.add(ticker);
     const back = new THREE.Mesh(new THREE.BoxGeometry(32, 16, 1.2), std(0x2c3138, 0.7));
     back.position.set(0, 9.4, 0); back.castShadow = true; g.add(back);
     [-11, 11].forEach(off => {
@@ -1810,10 +1837,149 @@ function buildVenueDressing() {
       const lamp = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.3), new THREE.MeshBasicMaterial({ color: 0xfff3c4 }));
       lamp.position.set(i * 1.5, 19.4, 0.28); g.add(lamp);
     }
+    // 昼間の淡いハロー（1人用から移植。空気感を出す）
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), transparent: true, opacity: 0.16, depthWrite: false }));
+    halo.scale.set(11, 6, 1); halo.position.set(0, 19.4, 0.7); g.add(halo);
     g.position.set(fx, 0, fz);
     g.lookAt(0, 0, 0);
     scene.add(g);
   });
+  /* ---- フェーズ15: 競馬場らしさの追加要素 ----
+     1人用の内馬場（池・花壇・生垣）とトートボードを移植し、審判塔・旗ポールを
+     追加。いずれも生成テクスチャ＋質感マテリアルで構成し、山・木・雲は入れない。 */
+  const leafTex15 = (() => { // 葉ノイズ（1人用 leafTex を移植）
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g2 = c.getContext('2d'); g2.fillStyle = '#e6eadf'; g2.fillRect(0, 0, 128, 128);
+    const cols = ['rgba(160,175,150,1)', 'rgba(120,140,112,1)', 'rgba(200,208,188,1)', 'rgba(96,116,88,1)'];
+    for (let i = 0; i < 5200; i++) { g2.fillStyle = cols[(Math.random() * cols.length) | 0]; g2.globalAlpha = 0.3 + Math.random() * 0.4; g2.fillRect(Math.random() * 128, Math.random() * 128, 1.8, 2.6); }
+    g2.globalAlpha = 1;
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 1); t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  const atAngle = (ang, off) => { // 楕円パラメータ角＋法線オフセットで配置を決める
+    const c = ellipsePoint(ang), n = ellipseNormal(ang);
+    return { x: c.x + n.x * off, z: c.z + n.z * off, rotY: Math.atan2(tangentAt(ang).x, tangentAt(ang).z) };
+  };
+  // 内馬場の池（1人用を移植: 空の映る水面テクスチャ＋縁石）
+  {
+    const pc = document.createElement('canvas'); pc.width = pc.height = 256;
+    const pg = pc.getContext('2d');
+    const pgr = pg.createRadialGradient(128, 128, 10, 128, 128, 128);
+    pgr.addColorStop(0, '#a8cade'); pgr.addColorStop(0.6, '#7fb0cc'); pgr.addColorStop(1, '#5d92b4');
+    pg.fillStyle = pgr; pg.fillRect(0, 0, 256, 256);
+    pg.strokeStyle = 'rgba(255,255,255,0.20)';
+    for (let ri = 0; ri < 26; ri++) { pg.lineWidth = 1 + Math.random() * 1.6; pg.beginPath(); pg.ellipse(128 + (Math.random() * 60 - 30), 128 + (Math.random() * 60 - 30), 8 + Math.random() * 46, 4 + Math.random() * 20, 0, 0, 7); pg.stroke(); }
+    pg.fillStyle = 'rgba(70,110,90,0.20)';
+    for (let pj = 0; pj < 40; pj++) { pg.beginPath(); pg.ellipse(Math.random() * 256, Math.random() * 256, 6 + Math.random() * 18, 3 + Math.random() * 9, 0, 0, 7); pg.fill(); }
+    const ptex = new THREE.CanvasTexture(pc); ptex.colorSpace = THREE.SRGBColorSpace;
+    const pond = new THREE.Mesh(new THREE.CircleGeometry(1, 36), new THREE.MeshStandardMaterial({ map: ptex, roughness: 0.18, metalness: 0.1 }));
+    pond.rotation.x = -Math.PI / 2; pond.scale.set(46, 23, 1); pond.position.set(-30, 0.03, -35); pond.receiveShadow = true; scene.add(pond);
+    const rim = new THREE.Mesh(new THREE.RingGeometry(0.97, 1.05, 36), std(0xd8d2c0, 1));
+    rim.rotation.x = -Math.PI / 2; rim.scale.set(46, 23, 1); rim.position.set(-30, 0.035, -35); scene.add(rim);
+  }
+  // 花壇（1人用 flowerMat を移植: 濃い緑の葉に落とした色の花ドット）。
+  // ホームストレート内側と向正面内側に、コースの曲線に沿って並べる
+  {
+    const flowerMat = colHex => {
+      const fc = document.createElement('canvas'); fc.width = fc.height = 128;
+      const fg = fc.getContext('2d'); fg.fillStyle = '#33512a'; fg.fillRect(0, 0, 128, 128);
+      for (let fi = 0; fi < 2600; fi++) { fg.fillStyle = ['#3c5f31', '#2c4724', '#476b38'][(Math.random() * 3) | 0]; fg.globalAlpha = 0.4 + Math.random() * 0.4; fg.fillRect(Math.random() * 128, Math.random() * 128, 2, 2.6); }
+      fg.globalAlpha = 1; fg.fillStyle = '#' + new THREE.Color(colHex).getHexString();
+      for (let fj = 0; fj < 420; fj++) { fg.globalAlpha = 0.5 + Math.random() * 0.5; fg.beginPath(); fg.arc(Math.random() * 128, Math.random() * 128, 1.1 + Math.random() * 1.5, 0, 7); fg.fill(); }
+      fg.globalAlpha = 1;
+      const ft = new THREE.CanvasTexture(fc); ft.wrapS = ft.wrapT = THREE.RepeatWrapping; ft.colorSpace = THREE.SRGBColorSpace;
+      return new THREE.MeshStandardMaterial({ map: ft, roughness: 1 });
+    };
+    const flowerMats = [0xc25a74, 0xd9a83c, 0xd07a3a, 0xe3ded2].map(flowerMat);
+    let bi = 0;
+    for (let ang = -0.62; ang <= 0.62; ang += 0.155) { // ホームストレート内側
+      const p = atAngle(ang, -17.5);
+      const bed = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.22, 17), flowerMats[bi++ % 4]);
+      bed.position.set(p.x, 0.11, p.z); bed.rotation.y = p.rotY; bed.receiveShadow = true; scene.add(bed);
+    }
+    for (let ang = Math.PI - 0.55; ang <= Math.PI + 0.55; ang += 0.16) { // 向正面内側
+      const p = atAngle(ang, -17.5);
+      const bed = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.22, 17), flowerMats[bi++ % 4]);
+      bed.position.set(p.x, 0.11, p.z); bed.rotation.y = p.rotY; bed.receiveShadow = true; scene.add(bed);
+    }
+  }
+  // 生垣（ホームストレート外側、ラチとスタンドの間。1人用 hedges を移植）
+  {
+    const hedgeM = new THREE.MeshStandardMaterial({ color: 0x39663a, map: leafTex15, roughness: 1 });
+    for (let ang = -0.78; ang <= 0.78; ang += 0.13) {
+      const p = atAngle(ang, 16.6);
+      const hedge = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.1, 19), hedgeM);
+      hedge.position.set(p.x, 0.55, p.z); hedge.rotation.y = p.rotY; hedge.castShadow = true; scene.add(hedge);
+    }
+  }
+  // トートボード（オッズ表示板）: 内馬場の決勝線寄り、両面表示（1人用を移植・解像度上げ）
+  {
+    const cc = document.createElement('canvas'); cc.width = 512; cc.height = 320;
+    const cg = cc.getContext('2d'); cg.fillStyle = '#14202c'; cg.fillRect(0, 0, 512, 320);
+    cg.strokeStyle = 'rgba(255,255,255,0.25)'; cg.lineWidth = 4; cg.strokeRect(6, 6, 500, 308);
+    cg.fillStyle = '#ffc21c'; cg.font = '900 52px sans-serif'; cg.textAlign = 'center'; cg.fillText('オッズボード', 256, 72);
+    cg.font = '700 38px sans-serif';
+    const rows = ['#ff6b6b', '#ffd93d', '#6bcbff', '#95e06b', '#ff9ff3'];
+    for (let i = 0; i < 5; i++) { cg.fillStyle = rows[i]; cg.fillText((i + 1) + '番人気  ' + (2.1 + i * 1.7).toFixed(1) + '倍', 256, 136 + i * 40); }
+    const ct = new THREE.CanvasTexture(cc); ct.colorSpace = THREE.SRGBColorSpace; ct.anisotropy = 4;
+    // 両面とも表示面にする（裏側が黒い板に見えると安っぽいため、背中合わせ2面）
+    [-0.36, 0.36].forEach(dx => {
+      const bd = new THREE.Mesh(new THREE.PlaneGeometry(13, 8), new THREE.MeshBasicMaterial({ map: ct }));
+      bd.position.set(148 + dx, 5.2, 34); bd.rotation.y = dx > 0 ? Math.PI / 2 : -Math.PI / 2; scene.add(bd);
+    });
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(0.6, 8.8, 13.8), std(0x23282e, 0.7));
+    frame.position.set(148, 5.0, 34); frame.castShadow = true; scene.add(frame);
+    [-4.5, 4.5].forEach(dz => {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 5.2, 8), std(0x666666, 0.5, 0.5));
+      post.position.set(148, 2.6, 34 + dz); post.castShadow = true; scene.add(post);
+    });
+  }
+  // 審判塔（決勝線の外側）: 白い塔体＋ガラス張りの審判室＋「審判」表示
+  {
+    const g = new THREE.Group();
+    const base = new THREE.Mesh(new THREE.BoxGeometry(2.8, 7.6, 2.8), new THREE.MeshStandardMaterial({ map: facadeTexture(), roughness: 0.92 }));
+    base.position.y = 3.8; base.castShadow = true; base.receiveShadow = true; g.add(base);
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(3.4, 2.3, 3.4), new THREE.MeshStandardMaterial({ map: glassTexture(), roughness: 0.22, metalness: 0.35 }));
+    cabin.position.y = 8.75; cabin.castShadow = true; g.add(cabin);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(3.9, 0.28, 3.9), std(0x39404a, 0.6));
+    roof.position.y = 10.05; roof.castShadow = true; g.add(roof);
+    const sign = makeBoardMesh('審判', '#20401c', '#ffffff', true);
+    sign.position.set(-1.78, 8.75, 0); sign.rotation.y = -Math.PI / 2; g.add(sign);
+    g.position.set(207.5, 0, -11);
+    scene.add(g);
+  }
+  // 旗ポール（内馬場・ホームストレート沿い）: 日の丸／場旗／白旗。旗は波形を
+  // 頂点に焼き込んだ生成テクスチャで、風になびく形にする
+  {
+    const flagTex = draw => {
+      const c = document.createElement('canvas'); c.width = 256; c.height = 160;
+      draw(c.getContext('2d'));
+      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+      return t;
+    };
+    const flagDefs = [
+      flagTex(g2 => { g2.fillStyle = '#f7f7f5'; g2.fillRect(0, 0, 256, 160); g2.fillStyle = '#bc002d'; g2.beginPath(); g2.arc(128, 80, 34, 0, 7); g2.fill(); }),
+      flagTex(g2 => { g2.fillStyle = '#1d5c38'; g2.fillRect(0, 0, 256, 160); g2.strokeStyle = '#d9b64a'; g2.lineWidth = 6; g2.strokeRect(8, 8, 240, 144); g2.fillStyle = '#ffffff'; g2.font = '900 56px sans-serif'; g2.textAlign = 'center'; g2.fillText('競馬場', 128, 100); }),
+      flagTex(g2 => { g2.fillStyle = '#f7f7f5'; g2.fillRect(0, 0, 256, 160); g2.strokeStyle = '#1d5c38'; g2.lineWidth = 9; g2.beginPath(); g2.arc(128, 80, 46, 0, 7); g2.stroke(); g2.fillStyle = '#1d5c38'; g2.font = '900 40px sans-serif'; g2.textAlign = 'center'; g2.fillText('競馬', 128, 95); }),
+    ];
+    [-0.42, 0, 0.42].forEach((ang, fi) => {
+      const p = atAngle(ang, -21);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 10.5, 8), std(0xd8d8d4, 0.45, 0.5));
+      pole.position.set(p.x, 5.25, p.z); pole.castShadow = true; scene.add(pole);
+      const geo = new THREE.PlaneGeometry(3.1, 1.95, 12, 4);
+      const posA = geo.attributes.position;
+      for (let vi = 0; vi < posA.count; vi++) {
+        const vx = posA.getX(vi);
+        posA.setZ(vi, Math.sin((vx / 3.1 + 0.5) * Math.PI * 1.6) * 0.16 * (vx / 3.1 + 0.5));
+      }
+      geo.computeVertexNormals();
+      const flag = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: flagDefs[fi], side: THREE.DoubleSide, roughness: 0.9 }));
+      flag.position.set(p.x, 9.35, p.z);
+      flag.rotation.y = p.rotY + Math.PI / 2; // 旗の幅がコース進行方向を向く
+      flag.castShadow = true;
+      scene.add(flag);
+    });
+  }
 }
 
 function initThree() {
@@ -1828,15 +1994,15 @@ function initThree() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.86; // 1人用と同値（明るすぎない落ち着いたトーン）
+  renderer.toneMappingExposure = 1.04; // フェーズ15: 実機で「濃い・黒寄りで重い」との指示を受け、1人用の暗め調整(0.86)から晴天の競馬場の自然な明るさへ（上げすぎは白飛ばしになるため小幅に）
   $('raceWrap').appendChild(renderer.domElement);
   bindDragLook(renderer.domElement);
   // 空: グラデーションドーム（1人用のシェーダーを移植。雲なし）
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
     uniforms: {
-      top: { value: new THREE.Color(0x597ea3) }, mid: { value: new THREE.Color(0xa7bccf) },
-      hor: { value: new THREE.Color(0xe9e7da) }, low: { value: new THREE.Color(0xcfd6cf) },
+      top: { value: new THREE.Color(0x5480ab) }, mid: { value: new THREE.Color(0xb2c9db) },
+      hor: { value: new THREE.Color(0xedeade) }, low: { value: new THREE.Color(0xd6dcd2) },
     },
     vertexShader: 'varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
     fragmentShader: [
@@ -1854,8 +2020,8 @@ function initThree() {
   const sky = new THREE.Mesh(new THREE.SphereGeometry(1480, 32, 18), skyMat);
   sky.frustumCulled = false; scene.add(sky);
   // 光: 真上寄りの太陽（影つき）＋空の反射＋弱いフィル（1人用と同値）
-  scene.add(new THREE.HemisphereLight(0xc4d6e2, 0x4c5540, 0.34));
-  sunLight = new THREE.DirectionalLight(0xffe9c2, 2.35);
+  scene.add(new THREE.HemisphereLight(0xcfe0ec, 0x55624a, 0.52)); // フェーズ15: 影側の黒つぶれを和らげるため 0.34→0.52
+  sunLight = new THREE.DirectionalLight(0xffe9c2, 2.45);
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.set(2048, 2048);
   sunLight.shadow.camera.left = -42; sunLight.shadow.camera.right = 42;
@@ -1863,7 +2029,7 @@ function initThree() {
   sunLight.shadow.camera.near = 20; sunLight.shadow.camera.far = 340;
   sunLight.shadow.bias = -0.0004; sunLight.shadow.normalBias = 0.03;
   scene.add(sunLight); scene.add(sunLight.target);
-  const fill = new THREE.DirectionalLight(0xdfeaf2, 0.12); fill.position.set(-90, 50, -70); scene.add(fill);
+  const fill = new THREE.DirectionalLight(0xdfeaf2, 0.18); fill.position.set(-90, 50, -70); scene.add(fill);
   // 地面: 外周の芝（1人用の刈り目ストライプ芝テクスチャ）
   const ground = new THREE.Mesh(new THREE.CircleGeometry(1460, 48), new THREE.MeshStandardMaterial({ map: grassTexture(90, 90), color: 0xc9ccc0, roughness: 1 }));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -0.03; ground.receiveShadow = true; scene.add(ground);
@@ -2732,12 +2898,119 @@ function updateVisOffsets(dt) {
     }
   });
 }
-/* 歩幅カーブ（脚アニメ・歩様位相で共用）。Gallopクリップ実測: 脚の振りを
-   1.3倍に広げた加工後で「滑らない歩幅」5.40m（素は4.37m）。このカーブだと
-   接地蹄の滑りは全速度域で ±2.3m/s 以内（旧時計駆動式は17m/sで +6.8m/s、
-   フレーム落ち・スローモーション時は +10m/s 級まで悪化していた）。 */
-function strideLenOf(spd) { return 3.6 + clamp(spd / 17, 0, 1.15) * 2.2; }
+/* 歩幅カーブ（脚アニメ・歩様位相で共用）。フェーズ15で実馬の歩様に寄せて再設計:
+   実馬の競走ギャロップは速度とともに歩幅が伸び（約8m/sで4.2m・約12m/sで5.6m・
+   約17m/sで7.2m）、ケイデンスは 1.9→2.35歩/秒 と緩やかにしか上がらない。
+   旧カーブ（3.6+sf×2.2、上限5.8m）は歩幅が頭打ちで、17m/sでケイデンス2.93歩/秒と
+   実馬より脚が忙しく「足の動きと速度が比例しない」主因だった。
+   クリップ側も脚の振りを1.5倍に広げ（tools/amplify-gallop.js、FK実測で歩幅
+   4.74→5.43m）、このカーブの上限6.2mとの差を滑り最大約+2.1m/sに抑えた。
+   低速域の負の滑り（接地蹄が後ろへ流れる）は単一クリップの構造上残るが、
+   ケイデンスを実馬に合わせる方を優先した（数値表は README フェーズ15）。 */
+function strideLenOf(spd) { return clamp(1.55 + 0.335 * spd, 3.1, 6.2); }
+/* ---------- 土煙（フェーズ15） ----------
+   ダートを蹴る土煙を、プール制スプライト（THREE.Points＋カスタムシェーダー）で
+   描く。発生量は速度と馬群の密度に連動し、馬場が湿るほど減る（良1.0/稍重0.55/
+   重0.25）。自馬は発生を絞り、カメラ（馬の頭部）より十分後ろから出すので
+   一人称の視界は埋まらない。粒子は最大1500個のリングバッファで使い回し、
+   毎フレームの属性書き込みは 1500×数float のみ（スマホ負荷は軽微）。
+   発生率と寿命から、全頭全速時の定常生存数は約800個と上限内に収まる。 */
+const DUST_MAX = 1500;
+let dust = null;
+function initDust() {
+  if (dust || !scene) return;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(32, 32, 2, 32, 32, 30);
+  gr.addColorStop(0, 'rgba(255,255,255,0.85)'); gr.addColorStop(0.55, 'rgba(255,255,255,0.38)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  // 均一な円にしないため、内側にムラを焼き込む
+  g.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < 26; i++) { g.fillStyle = 'rgba(0,0,0,' + (0.05 + Math.random() * 0.12) + ')'; g.beginPath(); g.arc(Math.random() * 64, Math.random() * 64, 3 + Math.random() * 8, 0, 7); g.fill(); }
+  const tex = new THREE.CanvasTexture(c);
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(DUST_MAX * 3), size = new Float32Array(DUST_MAX), alpha = new Float32Array(DUST_MAX), shade = new Float32Array(DUST_MAX);
+  for (let i = 0; i < DUST_MAX; i++) pos[i * 3 + 1] = -60;
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+  geo.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1));
+  geo.setAttribute('aShade', new THREE.BufferAttribute(shade, 1));
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { map: { value: tex }, uColor: { value: new THREE.Color(0xcbb491) } },
+    transparent: true, depthWrite: false,
+    vertexShader: [
+      'attribute float aSize; attribute float aAlpha; attribute float aShade;',
+      'varying float vA; varying float vS;',
+      'void main(){ vA=aAlpha; vS=aShade;',
+      '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
+      '  gl_PointSize = aSize * (340.0 / max(1.0, -mv.z));',
+      '  gl_Position = projectionMatrix * mv; }',
+    ].join('\n'),
+    fragmentShader: [
+      'uniform sampler2D map; uniform vec3 uColor;',
+      'varying float vA; varying float vS;',
+      'void main(){ vec4 tx = texture2D(map, gl_PointCoord);',
+      '  gl_FragColor = vec4(uColor * vS, tx.a * vA);',
+      '  #include <tonemapping_fragment>',
+      '  #include <colorspace_fragment>',
+      '}',
+    ].join('\n'),
+  });
+  const points = new THREE.Points(geo, mat);
+  points.frustumCulled = false; points.renderOrder = 5;
+  scene.add(points);
+  dust = {
+    points, geo, head: 0,
+    px: pos, sz: size, al: alpha, sh: shade,
+    vel: new Float32Array(DUST_MAX * 3), life: new Float32Array(DUST_MAX), maxLife: new Float32Array(DUST_MAX),
+    grow: new Float32Array(DUST_MAX), a0: new Float32Array(DUST_MAX),
+  };
+}
+function spawnDust(x, y, z, vx, vy, vz, life, size0, alpha0) {
+  const i = dust.head; dust.head = (dust.head + 1) % DUST_MAX;
+  dust.px[i * 3] = x; dust.px[i * 3 + 1] = y; dust.px[i * 3 + 2] = z;
+  dust.vel[i * 3] = vx; dust.vel[i * 3 + 1] = vy; dust.vel[i * 3 + 2] = vz;
+  dust.life[i] = 0; dust.maxLife[i] = life;
+  dust.sz[i] = size0; dust.grow[i] = 1.1 + Math.random() * 0.9;
+  dust.a0[i] = alpha0; dust.al[i] = 0;
+  dust.sh[i] = 0.88 + Math.random() * 0.24;
+}
+function updateDust(dt) {
+  if (!dust) return;
+  for (let i = 0; i < DUST_MAX; i++) {
+    if (dust.life[i] >= dust.maxLife[i]) { if (dust.al[i] !== 0) { dust.al[i] = 0; dust.px[i * 3 + 1] = -60; } continue; }
+    dust.life[i] += dt;
+    const f = dust.life[i] / dust.maxLife[i];
+    if (f >= 1) { dust.al[i] = 0; dust.px[i * 3 + 1] = -60; continue; }
+    const drag = Math.max(0, 1 - 1.15 * dt);
+    dust.vel[i * 3] *= drag; dust.vel[i * 3 + 2] *= drag;
+    dust.vel[i * 3 + 1] += (0.22 - dust.vel[i * 3 + 1]) * Math.min(1, dt * 0.9); // 上昇が弱まり滞留する
+    dust.px[i * 3] += dust.vel[i * 3] * dt;
+    dust.px[i * 3 + 1] = Math.max(0.12, dust.px[i * 3 + 1] + dust.vel[i * 3 + 1] * dt);
+    dust.px[i * 3 + 2] += dust.vel[i * 3 + 2] * dt;
+    dust.sz[i] += dust.grow[i] * dt;
+    dust.al[i] = dust.a0[i] * (f < 0.12 ? f / 0.12 : 1 - (f - 0.12) / 0.88);
+  }
+  dust.geo.attributes.position.needsUpdate = true;
+  dust.geo.attributes.aSize.needsUpdate = true;
+  dust.geo.attributes.aAlpha.needsUpdate = true;
+  dust.geo.attributes.aShade.needsUpdate = true;
+}
+// 検証用フック（?orbit 時のみ）: 土煙の生存数と騎手の姿勢サンプルを外部から読む
+if (new URLSearchParams(location.search).has('orbit')) {
+  window.__km = {
+    dustAlive: () => dust ? Array.from(dust.life).filter((v, i) => v < dust.maxLife[i]).length : -1,
+    strideLenOf,
+    sampleJock: () => {
+      const out = [];
+      horseMeshes.forEach(m => { const v = m.userData.vis; if (v) out.push({ z: +v.jock.position.z.toFixed(3), rz: +v.jock.rotation.z.toFixed(3), rx: +v.jock.rotation.x.toFixed(3) }); });
+      return out;
+    },
+  };
+}
 function updateMeshes(dt) {
+  initDust();
+  const goingDustMul = (typeof raceGoing !== 'undefined' && raceGoing) ? (raceGoing.id === 'ju' ? 0.25 : raceGoing.id === 'yaya' ? 0.55 : 1.0) : 1.0;
   runners.forEach((r, nick) => {
     const mesh = horseMeshes.get(nick); if (!mesh) return;
     const isMe = nick === myName;
@@ -2747,6 +3020,24 @@ function updateMeshes(dt) {
     mesh.position.set(p.x, 0, p.z);
     mesh.rotation.y = Math.atan2(p.dx, p.dz);
     const spd = isMe ? mySpeed : r.animSpeed;
+    // 土煙の発生: 速度と周囲の密度に連動。自馬は控えめ＋後方から（視界を守る）
+    if (dust && racing && spd > 5) {
+      let nearby = 0;
+      runners.forEach((o, on) => { if (on !== nick && Math.abs((on === myName ? myDist : o.smoothDist) - d) < 7) nearby++; });
+      const densityMul = Math.min(2.0, 1 + nearby * 0.18);
+      let rate = (spd - 5) * 1.15 * densityMul * goingDustMul * (isMe ? 0.4 : 1);
+      mesh.userData.dustAcc = (mesh.userData.dustAcc || 0) + rate * dt;
+      const back = isMe ? 2.1 : 1.35;
+      while (mesh.userData.dustAcc >= 1) {
+        mesh.userData.dustAcc -= 1;
+        const latJ = (Math.random() - 0.5) * 0.7, backJ = Math.random() * 0.5;
+        spawnDust(
+          p.x - p.dx * (back + backJ) - p.dz * latJ, 0.22 + Math.random() * 0.25, p.z - p.dz * (back + backJ) + p.dx * latJ,
+          -p.dx * (1.0 + spd * 0.10) + (Math.random() - 0.5) * 0.7, 0.5 + Math.random() * 0.9, -p.dz * (1.0 + spd * 0.10) + (Math.random() - 0.5) * 0.7,
+          1.8 + Math.random() * 1.0, 0.9 + Math.random() * 0.7,
+          (0.10 + Math.min(0.07, nearby * 0.012)) * (isMe ? 0.8 : 1));
+      }
+    }
     const sfH = clamp(spd / 17, 0, 1.15);
     // このフレームで実際に進んだ距離（脚・位相はすべてこれで駆動する）
     const dd = Math.max(0, d - (mesh.userData.animDist == null ? d : mesh.userData.animDist));
@@ -2772,18 +3063,39 @@ function updateMeshes(dt) {
     if (mesh.userData.fallback) {
       mesh.children.forEach(c => { if (c.name === 'leg') c.rotation.x = Math.sin(raceClock * 10 + r.phase) * 0.5; });
     }
-    // 騎手: 追い動作（前傾）と上下動、手綱は口元へ追従（1人用と同じ）
+    // 騎手: 馬の歩様位相に完全同期させる（フェーズ15で前後動・前傾・内傾を追加）
     const vis = mesh.userData.vis;
     if (vis) {
-      const crouch = clamp((spd - 12) / 6, 0, 1) * (paceKey === 'pushL' && isMe ? 1 : 0.75);
-      vis.jock.rotation.x = crouch * 0.16;
-      // 騎手の上下動も歩様位相に同期（1人用: 懸垂の跳ね＋着地の沈み）
-      const ph = isMe ? myPhase : r.phase;
+      // 前傾: 速度ベース＋ペースで強まる（自機はペース/ムチに連動、NPCは直線で強まる）
+      let crouchF = 0.75;
+      if (isMe) crouchF = paceKey === 'pushL' ? 1.0 : paceKey === 'pushS' ? 0.85 : paceKey === 'osae' ? 0.6 : 0.75;
+      else if (d > RACE_DIST * 0.8) crouchF = 0.85;
+      if (isMe && performance.now() < whipUntil) crouchF = Math.min(1.1, crouchF + 0.15);
+      const crouch = clamp((spd - 12) / 6, 0, 1) * crouchF;
+      const ph = isMe ? myPhase : r.phase; // 脚・カメラと同じ位相源（ズレを構造的に無くす）
       const susp = Math.pow(Math.max(0, Math.sin(ph - 0.55)), 2);
-      vis.jock.position.y = 1.66 + susp * 0.05 * sfH + Math.abs(Math.sin(ph)) * 0.02;
+      const surge = Math.sin(ph - 0.55);
+      vis.jock.rotation.x = crouch * 0.16 + Math.sin(ph - 1.05) * 0.028 * sfH; // 前傾＋歩様に同期した小さな頷き
+      vis.jock.position.y = 1.66 + susp * 0.05 * sfH + Math.abs(Math.sin(ph)) * 0.02; // 鐙の上下（フェーズ12）
+      vis.jock.position.z = 0.08 + surge * 0.035 * sfH; // 前後動: 馬の伸縮に合わせた体重移動
+      // コーナー内傾: 進行方向の変化率（曲率）×速度² から求め、内側へだけ倒す（最大約5°）
+      if (spd > 4) {
+        const pa = trackPoint(Math.max(0, d - 5), lane), pb = trackPoint(d + 5, lane);
+        let dth = Math.atan2(pb.dx, pb.dz) - Math.atan2(pa.dx, pa.dz);
+        while (dth > Math.PI) dth -= Math.PI * 2;
+        while (dth < -Math.PI) dth += Math.PI * 2;
+        const leanMag = Math.min(0.085, Math.atan(spd * spd * Math.abs(dth) / 10 / 9.8));
+        // コース中心が騎手の左右どちらか: 右なら正（rotation.z+ は頭が右へ倒れる）
+        const th = Math.atan2(p.dx, p.dz);
+        const rightX = -Math.cos(th), rightZ = Math.sin(th);
+        const cl = Math.hypot(p.x, p.z) || 1;
+        const side = (-p.x / cl) * rightX + (-p.z / cl) * rightZ;
+        vis.jock.rotation.z = leanMag * (side >= 0 ? 1 : -1);
+      } else vis.jock.rotation.z = 0;
       if (racing || d > 0) vis.updateBridle();
     }
   });
+  updateDust(dt);
 }
 const DEBUG_CAM = new URLSearchParams(location.search).get('cam'); // 検証用カメラプリセット（?orbit&cam=stand 等）
 function orbitCamera(dist) {
