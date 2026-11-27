@@ -1860,17 +1860,21 @@ function initThree() {
   const dirtBumpTex = new THREE.CanvasTexture(makeDirtBumpCanvas());
   dirtBumpTex.wrapS = dirtBumpTex.wrapT = THREE.RepeatWrapping;
   dirtMatRef = new THREE.MeshStandardMaterial({ map: dirtTex, bumpMap: dirtBumpTex, bumpScale: 0.9, color: 0xd8c6a2, roughness: 1 });
-  const dirt = ribbon(0, 23.4, 0.02, dirtMatRef, 18);
+  // ダート幅・白線・ラチ位置は1人用と同一寸法（TRACK_HW=11.5、ラチは +0.9）。
+  // 横位置クランプ LAT_MAX=9.7 は元々1人用と同値で、最内まで寄せたときの
+  // 余白は ダート端まで 11.5-9.69≒1.8m / ラチまで 12.4-9.69≒2.7m になる。
+  // 旧寸法（ダート23.4・ラチ±12.6）は余白が約0.2m広く「壁が遠い」感覚だった。
+  const dirt = ribbon(0, 23.0, 0.02, dirtMatRef, 18);
   scene.add(dirt);
   // コース両端の白線
   const lineMat = new THREE.MeshStandardMaterial({ color: 0xf5f2e8, roughness: 1 });
-  scene.add(ribbon(-11.45, 0.3, 0.035, lineMat));
-  scene.add(ribbon(11.45, 0.3, 0.035, lineMat));
+  scene.add(ribbon(-11.2, 0.3, 0.035, lineMat));
+  scene.add(ribbon(11.2, 0.3, 0.035, lineMat));
   // 内外ラチ
-  scene.add(buildRail(-12.6));
-  scene.add(buildRail(12.6));
+  scene.add(buildRail(-12.4));
+  scene.add(buildRail(12.4));
   // 決勝線＋ゴールポスト（赤ポール＋金球、1人用と同色）
-  const finishLine = new THREE.Mesh(new THREE.BoxGeometry(23.4, 0.012, 0.6), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }));
+  const finishLine = new THREE.Mesh(new THREE.BoxGeometry(23.0, 0.012, 0.6), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }));
   finishLine.position.set(A, 0.045, 0); scene.add(finishLine);
   const post = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 5, 10), new THREE.MeshStandardMaterial({ color: 0xd8232a, roughness: 0.5 }));
   post.position.set(A - 12.6, 2.5, 0); post.castShadow = true; scene.add(post);
@@ -1895,8 +1899,8 @@ let slipActive = false, myHorseDef = null, myStyleKey = 'senko', myDayForm = 1;
 let lastCommentAt = 0, lastLeader = '', barDots = new Map(), raceClock = 0, sendAcc = 0;
 /* 1人用移植: ゲート/反則/写真判定/リプレイ/観戦カメラの状態 */
 let myGateT = 0, gatePending = null, gateT0 = 0, gatePressed = false, gateRaf = 0;
-let foulCount = 0, contactT = 0, lastFoulAt = -9;
-const bumpCd = new Map(); // nickname -> 接触クールダウン残り秒
+let foulCount = 0, contactT = 0, selfFoulCd = 0;
+const foulCdMap = new Map(); // nickname -> その相手への反則クールダウン残り秒（1人用 o.foulCd と同一）
 let finishTimes = new Map(); // nickname -> サーバー確定ゴール時刻(秒)。runnerFinished で届く
 let flashDone = false, photoShownAt = 0, photoActive = false;
 let replayFrames = [], replayAcc = 0, replayOrder = [];
@@ -2008,7 +2012,7 @@ function setupField(field) {
   paceKey = 'nari'; whipsUsed = 0; whipUntil = 0; whipCdUntil = 0; paceHeat = 0;
   myFinished = false; finishFlashAt = 0; myRank = fieldSize; raceClock = 0; sendAcc = 0;
   slipActive = false; lookYaw = 0; lookHeld = null; dragYaw = 0;
-  foulCount = 0; contactT = 0; lastFoulAt = -9; bumpCd.clear();
+  foulCount = 0; contactT = 0; selfFoulCd = 0; foulCdMap.clear();
   finishTimes = new Map(); flashDone = false; photoShownAt = 0; photoActive = false;
   replayFrames = []; replayAcc = 0; gateTow = 0; myGateT = 0;
   $('foulTag').textContent = '反則 0回'; $('foulTag').classList.remove('foul-bad');
@@ -2248,7 +2252,6 @@ function sayComment(text) {
 }
 function registerFoul(o) {
   foulCount++;
-  lastFoulAt = raceClock;
   mySpeed *= 0.94;
   updateFoulTag();
   sfx('foul');
@@ -2262,7 +2265,8 @@ function registerFoul(o) {
 }
 function checkInterference(dt) {
   if (watchMode || myFinished || raceClock < 2.0) return; // 発走直後の密集は対象外（1人用と同じ）
-  runners.forEach((o, nick) => { if (nick !== myName) bumpCd.set(nick, Math.max(0, (bumpCd.get(nick) || 0) - dt)); });
+  selfFoulCd = Math.max(0, selfFoulCd - dt);
+  runners.forEach((o, nick) => { if (nick !== myName) foulCdMap.set(nick, Math.max(0, (foulCdMap.get(nick) || 0) - dt)); });
   let contacted = null;
   runners.forEach((o, nick) => {
     if (nick === myName) return;
@@ -2275,16 +2279,23 @@ function checkInterference(dt) {
       latVel += dir * fade * 1.6 * dt;
       o.phase += 0; // 相手はリモート表示のみ（押し出しは自機側の見た目に限定）
     }
-    const myLatVelSign = Math.abs(latVel) > 0.25 ? Math.sign(latVel) : 0;
-    const latClosing = myLatVelSign !== 0 && Math.sign(ld) === -myLatVelSign;
-    const sideHit = Math.abs(dd) < 2.4 && Math.abs(ld) < 1.25 && latClosing;
-    const cutOff = dd > 0.4 && dd < 3.4 && Math.abs(ld) < 1.3 && (latClosing || (paceKey === 'pushL' && mySpeed > (o.speed || 0) + 0.4));
-    if ((sideHit || cutOff) && (bumpCd.get(nick) || 0) <= 0) contacted = { o, nick };
+    /* 加害判定は1人用 checkInterference の movingInto そのまま:
+       「自分の横速度が相手のいる方向を向いている」ときだけ接触が蓄積する。
+       直進中に他馬が寄ってきた場合や、押し出しの反動（相手から離れる向きの
+       latVel）では絶対に数えない。旧マルチ版はこの符号が反転していたうえ
+       （離れる動きで成立）、攻め大＋速いだけで横移動なしでも成立する独自
+       条件があり、「ちょっと当たるだけですぐ反則」になっていた。 */
+    const movingInto = Math.abs(latVel) > 0.45 && ld !== 0 && Math.sign(latVel) === Math.sign(ld);
+    const sideHit = Math.abs(dd) < 2.4 && Math.abs(ld) < 1.25 && movingInto;
+    const cutOff = dd > 0.4 && dd < 3.4 && Math.abs(ld) < 1.3 && movingInto;
+    if (sideHit || cutOff) contacted = { o, nick };
   });
   if (contacted) {
     contactT += dt;
-    if (contactT > 0.22 && raceClock - lastFoulAt > 0.8) {
-      bumpCd.set(contacted.nick, 1.6);
+    // クールダウンは1人用 registerFoul と同一: 相手別 5.0s / 自分全体 1.4s
+    if (contactT > 0.22 && selfFoulCd <= 0 && (foulCdMap.get(contacted.nick) || 0) <= 0) {
+      foulCdMap.set(contacted.nick, 5.0);
+      selfFoulCd = 1.4;
       contactT = 0;
       registerFoul(runners.get(contacted.nick));
     }
