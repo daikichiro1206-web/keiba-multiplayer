@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D競馬ゲーム マルチプレイ</title>
+<style>
+  body { margin:0; font-family: sans-serif; background:#10240f; color:#fff; }
+  .panel { max-width:720px; margin:0 auto; padding:12px 16px 24px; }
+  h1 { font-size:20px; margin:10px 0; }
+  input, select, button { font-size:16px; padding:10px; margin:4px 0; border-radius:8px; border:none; }
+  button { background:#2e7d32; color:#fff; cursor:pointer; }
+  button.sub { background:#455a64; }
+  button:disabled { background:#666; opacity:.6; cursor:default; }
+  .card { background:rgba(255,255,255,.08); border-radius:12px; padding:12px; margin:10px 0; }
+  .hidden { display:none !important; }
+  .err { color:#ffab91; min-height:1.2em; }
+  .code { font-size:28px; letter-spacing:4px; font-weight:bold; }
+  /* 所持金バー（1人用版のホーム上部バーに相当） */
+  #walletBar { position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:10px;
+    background:rgba(8,24,8,.92); padding:8px 12px; border-bottom:1px solid rgba(255,255,255,.15); flex-wrap:wrap; }
+  #walletBar .bal { font-size:18px; font-weight:bold; color:#ffd54f; }
+  #walletBar .spacer { flex:1; }
+  #walletBar button { padding:6px 10px; font-size:14px; margin:0; }
+  /* レース情報カード・距離選択 */
+  .distChips { display:flex; gap:8px; flex-wrap:wrap; }
+  .distChips button { flex:1; min-width:96px; background:#37474f; }
+  .distChips button.sel { background:#2e7d32; outline:2px solid #ffd54f; }
+  .distChips button small { display:block; font-size:11px; opacity:.8; }
+  .modeBtns button { width:100%; font-size:18px; padding:14px; margin:6px 0; }
+  /* 馬選び（パドック風） */
+  #previewWrap { background:linear-gradient(#87b5d9 62%, #5d8a3c 62%); border-radius:10px; overflow:hidden; }
+  #previewCanvas { width:100%; height:220px; display:block; }
+  .statRow { display:flex; align-items:center; gap:8px; margin:4px 0; font-size:13px; }
+  .statRow .nm { width:76px; flex:none; }
+  .statBar { flex:1; height:10px; background:#263238; border-radius:5px; overflow:hidden; }
+  .statFill { height:100%; border-radius:5px; }
+  .chip { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; background:#546e7a; margin-right:4px; }
+  .chip.style { background:#6a1b9a; }
+  .filterAxis, .filterVals { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
+  .filterAxis button, .filterVals button { padding:6px 10px; font-size:13px; background:#37474f; margin:0; }
+  .filterAxis button.sel, .filterVals button.sel { background:#2e7d32; outline:2px solid #ffd54f; }
+  .horseGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .horseCard { background:rgba(255,255,255,.07); border:2px solid transparent; border-radius:10px; padding:8px; cursor:pointer; font-size:13px; }
+  .horseCard.sel { border-color:#ffd54f; background:rgba(255,213,79,.12); }
+  .horseCard .hn { font-weight:bold; font-size:14px; }
+  .horseCard.locked .hn { color:#cfd8dc; }
+  .horseCard .lockTag { color:#ffd54f; font-size:12px; }
+  /* レースHUD（1人用版: 上部に大きな残り距離＋区間バー） */
+  #raceWrap { position:fixed; inset:0; }
+  #hudTop { position:absolute; top:8px; left:8px; right:8px; display:flex; gap:8px; align-items:flex-start; pointer-events:none; }
+  .hudbox { background:rgba(0,0,0,.55); padding:8px 12px; border-radius:10px; font-weight:bold; }
+  #hudCenter { flex:1; text-align:center; background:rgba(0,0,0,.55); border-radius:10px; padding:8px 12px; }
+  #hudRemain { font-size:30px; font-weight:bold; line-height:1.1; }
+  #hudSection { font-size:13px; opacity:.9; }
+  #distBar { position:relative; height:8px; background:#37474f; border-radius:4px; margin:14px 4px 16px; }
+  #distFill { height:100%; width:0%; background:#ffd54f; border-radius:4px; }
+  #distBar .marker { position:absolute; top:-4px; width:2px; height:16px; background:#eceff1; transform:translateX(-1px); }
+  #distBar .marker i { position:absolute; top:-14px; left:50%; transform:translateX(-50%); font-style:normal; font-size:9px; white-space:nowrap; color:#eceff1; }
+  #distBar .marker.last i { transform:translateX(-90%); }
+  #hudCount { font-size:26px; color:#ffd54f; min-height:1em; text-align:center; }
+  #staminaBar { width:130px; height:12px; background:#333; border-radius:6px; overflow:hidden; margin-top:4px; }
+  #staminaFill { height:100%; background:#7cb342; width:100%; }
+  #goalFlash { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-size:64px; font-weight:bold; color:#ffd54f; text-shadow:0 4px 18px rgba(0,0,0,.8); pointer-events:none; z-index:5; }
+  #controls { position:absolute; bottom:10px; left:0; right:0; display:flex; justify-content:center; align-items:flex-end; gap:6px; flex-wrap:wrap; padding:0 8px; }
+  #controls button { pointer-events:auto; opacity:.94; }
+  #controls .paceBtns { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; }
+  #controls button.active { background:#f9a825; color:#212121; outline:2px solid #fff; }
+  #controls .laneBtn { font-size:20px; padding:14px 18px; }
+  table { width:100%; border-collapse:collapse; }
+  td, th { padding:6px; border-bottom:1px solid rgba(255,255,255,.15); text-align:left; }
+  /* 設定モーダル */
+  #settingsModal { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:50; display:flex; align-items:center; justify-content:center; }
+  #settingsModal .box { background:#1b2a1b; border-radius:14px; padding:20px; width:min(420px, 90vw); }
+  #settingsModal label { display:block; margin:12px 0 4px; font-size:14px; }
+  #settingsModal input[type=range] { width:100%; }
+</style>
+</head>
+<body>
+
+<!-- 所持金バー（ログイン後に常時表示） -->
+<div id="walletBar" class="hidden">
+  <span id="walletName">—</span>
+  <span class="bal">💰 <span id="walletBal">0</span>G</span>
+  <span id="walletMeta" style="font-size:13px;opacity:.85"></span>
+  <span class="spacer"></span>
+  <button id="btnSound" class="sub" title="サウンド ON/OFF">🔊</button>
+  <button id="btnSettings" class="sub">⚙ 設定</button>
+</div>
+
+<div class="panel" id="screenLogin">
+  <h1>🏇 3D競馬ゲーム マルチプレイ</h1>
+  <p>ニックネームと合言葉でログイン（初めての名前なら自動でアカウント作成）。</p>
+  <input id="nickname" placeholder="ニックネーム" style="width:100%"><br>
+  <input id="password" type="password" placeholder="合言葉（3文字以上）" style="width:100%"><br>
+  <button id="btnLogin" style="width:100%">ログイン / 新規登録</button>
+  <p class="err" id="loginErr"></p>
+  <p style="font-size:12px;opacity:.75">馬モデル: "Bay Horse" by vinish.dev (https://vinish.dev/free-3d-models/), CC BY 4.0（毛色変更・軽量化のため改変）</p>
+</div>
+
+<div class="panel hidden" id="screenHome">
+  <h1>ホーム</h1>
+  <div class="card" id="raceInfoCard">
+    <div style="font-size:13px;opacity:.85">次のレース</div>
+    <div style="font-size:18px;font-weight:bold">中距離チャンピオンシップ（2000m）</div>
+    <div style="font-size:13px">18頭立て ／ 1着賞金 1,500G</div>
+  </div>
+  <div class="card">
+    <div style="font-size:13px;opacity:.85;margin-bottom:6px">距離を選ぶ</div>
+    <div class="distChips">
+      <button data-dist="1000" disabled>1000m<small>マルチ版は次フェーズ対応</small></button>
+      <button data-dist="1500" disabled>1500m<small>マルチ版は次フェーズ対応</small></button>
+      <button data-dist="2000" class="sel">2000m<small>1着 1,500G</small></button>
+    </div>
+  </div>
+  <div class="modeBtns">
+    <button id="btnSoloMode">🏇 レースに出る（ひとりで遊ぶ）</button>
+    <button id="btnMultiMode" class="sub">👥 友達と対戦（マルチ）</button>
+  </div>
+  <div class="card hidden" id="soloPanel">
+    <p style="margin:6px 0">自分＋NPC17頭の18頭立て。部屋コードは不要、そのままレースできます。</p>
+    <div id="soloPickerSlot"></div>
+    <button id="btnSoloStart" style="width:100%">この馬でレース開始</button>
+  </div>
+  <div class="hidden" id="multiPanel">
+    <button id="btnCreate" style="width:100%">部屋を作る</button>
+    <div class="card">
+      <input id="joinCode" placeholder="部屋コード（例: ABCDE）" style="width:60%; text-transform:uppercase">
+      <button id="btnJoin">参加する</button>
+    </div>
+  </div>
+  <p class="err" id="homeErr"></p>
+  <p style="font-size:12px;opacity:.75">馬モデル: "Bay Horse" by vinish.dev (https://vinish.dev/free-3d-models/), CC BY 4.0（毛色変更・軽量化のため改変）</p>
+</div>
+
+<div class="panel hidden" id="screenLobby">
+  <h1>ロビー</h1>
+  <div class="card">部屋コード: <span class="code" id="roomCode"></span><br>友達にこのコードを送ってね。全員の準備OKでスタート（最大8人＋NPCで18頭立て）。</div>
+  <div class="card" id="memberList"></div>
+  <div id="lobbyPickerSlot"></div>
+  <button id="btnReady" style="width:100%">準備OK</button>
+  <p class="err" id="lobbyErr"></p>
+</div>
+
+<!-- 馬選びコンポーネント（ソロ/ロビーで共用、JSで差し込む） -->
+<div id="horsePicker" class="hidden">
+  <div class="card">
+    <div id="previewWrap"><canvas id="previewCanvas" width="640" height="220"></canvas></div>
+    <div style="margin-top:10px">
+      <span id="pkName" style="font-size:18px;font-weight:bold">—</span>
+      <span class="chip style" id="pkStyle">—</span><span class="chip" id="pkApt">—</span><span class="chip" id="pkEra">—</span>
+    </div>
+    <div id="pkBars" style="margin-top:6px"></div>
+    <div id="pkInfo" style="font-size:13px;margin-top:6px"></div>
+    <button id="pkUnlock" class="hidden" style="width:100%"></button>
+  </div>
+  <div class="filterAxis" id="pkAxis"></div>
+  <div class="filterVals" id="pkVals"></div>
+  <div class="horseGrid" id="pkGrid"></div>
+  <p id="pkEmpty" class="hidden" style="font-size:13px;opacity:.8">該当する馬がいません</p>
+</div>
+
+<div id="raceWrap" class="hidden">
+  <div id="hudTop">
+    <div class="hudbox"><div id="hudPos">- 位</div><div style="font-size:11px;opacity:.85">/ 18頭立て</div></div>
+    <div id="hudCenter">
+      <div id="hudRemain">残り 2,000m</div>
+      <div id="hudSection">スタート</div>
+      <div id="distBar"><div id="distFill"></div>
+        <span class="marker" style="left:50%"><i>第3コーナー</i></span>
+        <span class="marker" style="left:63%"><i>第4コーナー</i></span>
+        <span class="marker" style="left:80%"><i>残り400m</i></span>
+        <span class="marker last" style="left:100%"><i>ゴール</i></span>
+      </div>
+      <div id="hudCount"></div>
+    </div>
+    <div class="hudbox"><div style="font-size:12px">スタミナ</div><div id="staminaBar"><div id="staminaFill"></div></div></div>
+  </div>
+  <div id="goalFlash" class="hidden"></div>
+  <div id="controls">
+    <button id="btnLeft" class="laneBtn">◀</button>
+    <div class="paceBtns">
+      <button data-pace="0">おさえる</button>
+      <button data-pace="1" class="active">馬なり</button>
+      <button data-pace="2">攻め・小</button>
+      <button data-pace="3">攻め・大</button>
+      <button id="btnWhip" style="background:#b71c1c">ムチ</button>
+    </div>
+    <button id="btnRight" class="laneBtn">▶</button>
+  </div>
+</div>
+
+<div class="panel hidden" id="screenResult">
+  <h1>結果</h1>
+  <div class="card"><table id="resultTable"></table></div>
+  <button id="btnAgain" style="width:100%">ロビーに戻る</button>
+</div>
+
+<!-- 設定モーダル -->
+<div id="settingsModal" class="hidden">
+  <div class="box">
+    <h1 style="margin-top:0">⚙ 設定</h1>
+    <label>音量</label>
+    <input type="range" id="setVolume" min="0" max="100" step="1">
+    <label><input type="checkbox" id="setMute" style="width:auto"> ミュート（音を出さない）</label>
+    <label>アカウント</label>
+    <button id="btnLogout" class="sub" style="width:100%">ログアウト</button>
+    <p style="font-size:12px;opacity:.75">馬モデル: "Bay Horse" by vinish.dev, CC BY 4.0（改変あり）</p>
+    <button id="btnCloseSettings" style="width:100%">閉じる</button>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three.module.js",
+  "three/addons/": "./vendor/addons/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+'use strict';
+const $ = id => document.getElementById(id);
+let token = localStorage.getItem('km_token') || '';
+let profile = null, horses = [], ws = null, myName = '';
+let roomState = null;
+
+// レース状態
+const TRACK_LEN = 2000;
+let racing = false, myDist = 0, mySpeed = 0, myLane = 0, myLanePos = 0, pace = 1, stamina = 100;
+let runners = new Map(); // nickname -> {dist, lane, npc, mesh, smoothDist}
+let raceStartAt = 0, lastFrame = 0, posTimer = null;
+let whipLeft = 3, whipUntil = 0;
+
+/* ---------- サウンド（Web Audio合成、設定は保存） ---------- */
+let audioCtx = null, masterGain = null;
+let sndVol = Number(localStorage.getItem('km_vol') ?? 50) / 100;
+let sndMute = localStorage.getItem('km_mute') === '1';
+function ensureAudio() {
+  if (!audioCtx) {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = audioCtx.createGain();
+      masterGain.connect(audioCtx.destination);
+    } catch { return; }
+  }
+  applyVol();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+function applyVol() { if (masterGain) masterGain.gain.value = sndMute ? 0 : sndVol * 0.6; }
+function tone(freq, delay, dur, type = 'sine', vol = 0.25) {
+  if (!audioCtx || sndMute) return;
+  const t0 = audioCtx.currentTime + delay;
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(vol, t0 + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  o.connect(g); g.connect(masterGain);
+  o.start(t0); o.stop(t0 + dur + 0.05);
+}
+function sfx(name) {
+  if (sndMute) return;
+  ensureAudio(); if (!audioCtx) return;
+  if (name === 'click') tone(1150, 0, 0.06, 'square', 0.08);
+  else if (name === 'beep') tone(880, 0, 0.12, 'sine', 0.22);
+  else if (name === 'fanfare') [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.11, 0.34, 'triangle', 0.25));
+  else if (name === 'goal') [784, 988, 1175, 1568].forEach((f, i) => tone(f, i * 0.09, 0.3, 'triangle', 0.22));
+}
+document.addEventListener('click', e => { if (e.target.closest('button')) sfx('click'); });
+function refreshSoundBtn() { $('btnSound').textContent = sndMute ? '🔇' : '🔊'; }
+$('btnSound').onclick = () => { sndMute = !sndMute; localStorage.setItem('km_mute', sndMute ? '1' : '0'); applyVol(); refreshSoundBtn(); };
+$('btnSettings').onclick = () => { $('setVolume').value = Math.round(sndVol * 100); $('setMute').checked = sndMute; $('settingsModal').classList.remove('hidden'); };
+$('btnCloseSettings').onclick = () => $('settingsModal').classList.add('hidden');
+$('setVolume').oninput = () => { sndVol = Number($('setVolume').value) / 100; localStorage.setItem('km_vol', $('setVolume').value); applyVol(); };
+$('setMute').onchange = () => { sndMute = $('setMute').checked; localStorage.setItem('km_mute', sndMute ? '1' : '0'); applyVol(); refreshSoundBtn(); };
+$('btnLogout').onclick = () => { localStorage.removeItem('km_token'); localStorage.removeItem('km_room'); location.reload(); };
+refreshSoundBtn();
+
+/* ---------- ログイン / ウォレットバー ---------- */
+$('btnLogin').onclick = async () => {
+  ensureAudio();
+  const nickname = $('nickname').value.trim(), password = $('password').value;
+  const r = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nickname, password }) });
+  const j = await r.json();
+  if (!r.ok) { $('loginErr').textContent = j.error || '失敗しました'; return; }
+  token = j.token; profile = j.profile; horses = j.horses; myName = nickname;
+  localStorage.setItem('km_token', token);
+  connectWs();
+  showHome();
+};
+function refreshWallet() {
+  if (!profile) return;
+  $('walletBar').classList.remove('hidden');
+  $('walletName').textContent = profile.nickname + ' さん';
+  $('walletBal').textContent = profile.balance.toLocaleString();
+  $('walletMeta').textContent = `解放 ${profile.unlocked.length}頭 ／ ${profile.wins}勝 ／ ${profile.races}戦`;
+}
+function showHome() {
+  $('screenLogin').classList.add('hidden'); $('screenLobby').classList.add('hidden');
+  $('screenResult').classList.add('hidden'); $('raceWrap').classList.add('hidden');
+  $('screenHome').classList.remove('hidden');
+  refreshWallet();
+}
+
+/* ---------- WebSocket ---------- */
+function connectWs() {
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+  ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', token, roomCode: localStorage.getItem('km_room') || undefined }));
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.type === 'welcome') { profile = m.profile; horses = m.horses; refreshWallet(); }
+    else if (m.type === 'error') { $('homeErr').textContent = m.message; $('lobbyErr').textContent = m.message; }
+    else if (m.type === 'room') { roomState = m.room; if (!soloMode) renderLobby(m.room); }
+    else if (m.type === 'countdown') { startCountdown(m); }
+    else if (m.type === 'raceStart') { beginRace(m.field); }
+    else if (m.type === 'state') { applyState(m.runners); }
+    else if (m.type === 'results') { showResults(m.standings); }
+  };
+  ws.onclose = () => { setTimeout(() => { if (token) connectWs(); }, 3000); }; // 最低限の再接続
+}
+const send = o => ws && ws.readyState === 1 && ws.send(JSON.stringify(o));
+
+/* ---------- 馬選び（2列グリッド＋フィルター＋プレビュー） ---------- */
+let pickerCtx = 'solo';           // 'solo' | 'lobby'
+let selectedHorseId = null;       // 詳細表示中（＝乗る馬。未解放は解放してから）
+let filterAxis = 'all', filterVal = null;
+const FILTER_AXES = [
+  ['all', 'すべて'], ['style', '脚質'], ['apt', '距離適性'], ['lock', '解放状態'], ['era', '世代'],
+];
+const FILTER_VALS = {
+  style: ['逃げ', '先行', '差し', '追込'],
+  apt: ['短距離', 'マイル', '中距離', '長距離'],
+  lock: ['解放済み', '未解放'],
+  era: ['〜90年代', '2000年代', '2010年代', '2020年代'],
+};
+const STYLE_TEXT = {
+  '逃げ': 'スタートから先頭に立ち、逃げ切りを狙う',
+  '先行': '好位置につけて、直線で抜け出す',
+  '差し': '中団で脚をため、直線で差し切る',
+  '追込': '最後方で待ち、直線一気の末脚勝負',
+};
+function horseStats(h) {
+  const seed = [...h.id].reduce((a, c) => a + c.charCodeAt(0), 0);
+  const base = 46 + (h.rating - 87) * 3.4; // レーティング87-96 → 約46-77
+  const sb = { '逃げ': [14, 2, -12, 2], '先行': [7, 5, 0, 5], '差し': [-3, 6, 9, 3], '追込': [-12, 8, 14, 0] }[h.style] || [0, 0, 0, 0];
+  const aptB = h.apt === '長距離' ? 8 : h.apt === '中距離' ? 4 : 0;
+  const jitter = i => ((seed * (i + 3)) % 9) - 4;
+  const cl = v => Math.max(5, Math.min(99, Math.round(v)));
+  return [
+    ['序盤の速さ', cl(base + sb[0] + jitter(0)), '#ef6c00'],
+    ['スタミナ', cl(base + sb[1] + aptB + jitter(1)), '#43a047'],
+    ['末脚', cl(base + sb[2] + jitter(2)), '#1e88e5'],
+    ['パワー', cl(base + sb[3] + jitter(3)), '#8e24aa'],
+  ];
+}
+function filteredHorses() {
+  if (filterAxis === 'all' || !filterVal) return horses;
+  return horses.filter(h => {
+    if (filterAxis === 'style') return h.style === filterVal;
+    if (filterAxis === 'apt') return h.apt === filterVal;
+    if (filterAxis === 'era') return h.era === filterVal;
+    if (filterAxis === 'lock') return (filterVal === '解放済み') === profile.unlocked.includes(h.id);
+    return true;
+  });
+}
+function attachPicker(slotId, ctx) {
+  pickerCtx = ctx;
+  $(slotId).appendChild($('horsePicker'));
+  $('horsePicker').classList.remove('hidden');
+  if (!selectedHorseId || !horses.some(h => h.id === selectedHorseId)) {
+    selectedHorseId = (horses.find(h => profile.unlocked.includes(h.id)) || horses[0] || {}).id;
+  }
+  renderPicker();
+  initPreview();
+}
+function renderPicker() {
+  if (!profile || !horses.length) return;
+  const h = horses.find(x => x.id === selectedHorseId) || horses[0];
+  if (!h) return;
+  selectedHorseId = h.id;
+  const unlocked = profile.unlocked.includes(h.id);
+  $('pkName').textContent = h.name;
+  $('pkStyle').textContent = '脚質：' + h.style;
+  $('pkApt').textContent = '適性：' + (h.apt || '中距離');
+  $('pkEra').textContent = h.era || '';
+  $('pkBars').innerHTML = horseStats(h).map(([nm, v, col]) =>
+    `<div class="statRow"><span class="nm">${nm}</span><div class="statBar"><div class="statFill" style="width:${v}%;background:${col}"></div></div><b>${v}</b></div>`).join('');
+  $('pkInfo').innerHTML = unlocked
+    ? `${STYLE_TEXT[h.style] || ''}（レーティング ${h.rating}）`
+    : `${STYLE_TEXT[h.style] || ''}（レーティング ${h.rating}）<br><span class="lockTag">🔒 未解放 — 解放すると乗れるようになります</span>`;
+  const ub = $('pkUnlock');
+  if (unlocked) { ub.classList.add('hidden'); }
+  else {
+    ub.classList.remove('hidden');
+    ub.textContent = profile.balance >= h.price ? `${h.price.toLocaleString()}G で解放する` : `解放には ${h.price.toLocaleString()}G（所持金不足）`;
+    ub.disabled = profile.balance < h.price;
+  }
+  // フィルター
+  $('pkAxis').innerHTML = FILTER_AXES.map(([k, nm]) =>
+    `<button data-axis="${k}" class="${filterAxis === k ? 'sel' : ''}">${nm}</button>`).join('');
+  $('pkAxis').querySelectorAll('button').forEach(b => b.onclick = () => { filterAxis = b.dataset.axis; filterVal = null; renderPicker(); });
+  const vals = FILTER_VALS[filterAxis] || [];
+  $('pkVals').innerHTML = vals.map(v => `<button data-val="${v}" class="${filterVal === v ? 'sel' : ''}">${v}</button>`).join('');
+  $('pkVals').querySelectorAll('button').forEach(b => b.onclick = () => { filterVal = filterVal === b.dataset.val ? null : b.dataset.val; renderPicker(); });
+  // グリッド
+  const list = filteredHorses();
+  $('pkEmpty').classList.toggle('hidden', list.length > 0);
+  $('pkGrid').innerHTML = list.map(x => {
+    const un = profile.unlocked.includes(x.id);
+    return `<div class="horseCard ${x.id === selectedHorseId ? 'sel' : ''} ${un ? '' : 'locked'}" data-id="${x.id}">
+      <div class="hn">${un ? '' : '🔒 '}${x.name}</div>
+      <div><span class="chip style">${x.style}</span><span class="chip">${x.apt || ''}</span></div>
+      <div>${un ? '解放済み' : `<span class="lockTag">${x.price.toLocaleString()}G</span>`} ／ 評価 ${x.rating}</div>
+    </div>`;
+  }).join('');
+  $('pkGrid').querySelectorAll('.horseCard').forEach(c => c.onclick = () => {
+    selectedHorseId = c.dataset.id;
+    renderPicker();
+    updatePreviewHorse();
+    if (pickerCtx === 'lobby' && profile.unlocked.includes(selectedHorseId)) send({ type: 'selectHorse', horseId: selectedHorseId });
+    updateSoloStartBtn();
+  });
+  updateSoloStartBtn();
+}
+function updateSoloStartBtn() {
+  const b = $('btnSoloStart');
+  if (!b || pickerCtx !== 'solo') return;
+  const okRide = selectedHorseId && profile && profile.unlocked.includes(selectedHorseId);
+  b.disabled = !okRide;
+  b.textContent = okRide ? 'この馬でレース開始' : '未解放の馬は解放してから選んでください';
+}
+$('pkUnlock').onclick = async () => {
+  const h = horses.find(x => x.id === selectedHorseId);
+  if (!h) return;
+  const r = await fetch('/api/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, horseId: h.id }) });
+  const j = await r.json();
+  if (!r.ok) { $('homeErr').textContent = j.error || '解放に失敗しました'; return; }
+  profile = j.profile;
+  refreshWallet();
+  renderPicker();
+  updatePreviewHorse();
+  if (pickerCtx === 'lobby') send({ type: 'selectHorse', horseId: h.id });
+};
+
+/* ---------- プレビュー（小さな3Dビューア、選択馬が回転） ---------- */
+let pvRenderer = null, pvScene = null, pvCamera = null, pvGroup = null, pvMesh = null, pvLast = 0;
+function initPreview() {
+  if (pvRenderer) { updatePreviewHorse(); return; }
+  const canvas = $('previewCanvas');
+  pvRenderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  pvRenderer.setSize(canvas.clientWidth || 640, 220, false);
+  pvScene = new THREE.Scene();
+  pvScene.background = new THREE.Color(0x87b5d9);
+  pvCamera = new THREE.PerspectiveCamera(45, (canvas.clientWidth || 640) / 220, 0.1, 100);
+  pvCamera.position.set(3.0, 1.8, 3.4);
+  pvCamera.lookAt(0, 1.0, 0);
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(7, 32), new THREE.MeshLambertMaterial({ color: 0x5d8a3c }));
+  ground.rotation.x = -Math.PI / 2; pvScene.add(ground);
+  pvScene.add(new THREE.AmbientLight(0xffffff, 0.8));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(4, 8, 3); pvScene.add(sun);
+  pvGroup = new THREE.Group(); pvScene.add(pvGroup);
+  pvLast = performance.now();
+  requestAnimationFrame(pvLoop);
+  updatePreviewHorse();
+}
+function updatePreviewHorse() {
+  if (!pvGroup) return;
+  modelReady.then(() => {
+    if (!horseTemplate || !pvGroup) return;
+    if (pvMesh) { pvGroup.remove(pvMesh); }
+    const idx = Math.max(0, horses.findIndex(h => h.id === selectedHorseId));
+    pvMesh = makeModelHorse(idx);
+    pvGroup.add(pvMesh);
+  });
+}
+function pvLoop(now) {
+  requestAnimationFrame(pvLoop);
+  if (!pvRenderer || $('horsePicker').classList.contains('hidden')) return;
+  const dt = Math.min(0.05, (now - pvLast) / 1000); pvLast = now;
+  if (pvGroup) pvGroup.rotation.y += dt * 0.7;
+  if (pvMesh && pvMesh.userData.anim) pvMesh.userData.anim.mixer.update(dt);
+  pvRenderer.render(pvScene, pvCamera);
+}
+
+/* ---------- ソロ / マルチ切替 ---------- */
+let soloMode = false;
+$('btnSoloMode').onclick = () => {
+  soloMode = true;
+  $('soloPanel').classList.remove('hidden'); $('multiPanel').classList.add('hidden');
+  attachPicker('soloPickerSlot', 'solo');
+};
+$('btnMultiMode').onclick = () => {
+  soloMode = false;
+  $('multiPanel').classList.remove('hidden'); $('soloPanel').classList.add('hidden');
+};
+$('btnSoloStart').onclick = () => { if (selectedHorseId) send({ type: 'soloStart', horseId: selectedHorseId }); };
+
+/* ---------- ロビー ---------- */
+$('btnCreate').onclick = () => send({ type: 'createRoom' });
+$('btnJoin').onclick = () => send({ type: 'joinRoom', code: $('joinCode').value.trim() });
+function renderLobby(room) {
+  if (room.state !== 'lobby' && room.state !== 'countdown') return;
+  $('screenHome').classList.add('hidden'); $('screenResult').classList.add('hidden');
+  $('screenLobby').classList.remove('hidden');
+  localStorage.setItem('km_room', room.code);
+  $('roomCode').textContent = room.code;
+  const me = room.players.find(p => p.nickname === myName);
+  if (me && me.horseId) selectedHorseId = me.horseId;
+  attachPicker('lobbyPickerSlot', 'lobby');
+  $('memberList').innerHTML = room.players.map(p =>
+    `<div>${p.connected ? '🟢' : '⚪'} ${p.nickname} — ${p.horseName} ${p.ready ? '✅準備OK' : '…準備中'}</div>`).join('');
+  $('btnReady').textContent = me && me.ready ? '準備を取り消す' : '準備OK';
+}
+$('btnReady').onclick = () => {
+  const me = roomState && roomState.players.find(p => p.nickname === myName);
+  send({ type: 'ready', ready: !(me && me.ready) });
+};
+
+/* ---------- 3Dレース（フェーズ2: 本物の彫刻GLBモデル） ---------- */
+let scene, camera, renderer, horseMeshes = new Map(), myHorseMesh = null;
+const A = 190, B = 120; // 楕円トラック半径（見た目用）
+function trackPoint(dist, lane) {
+  const t = (dist / TRACK_LEN) * Math.PI * 2;
+  const rOff = (lane - 8.5) * 1.1;
+  const x = Math.cos(t) * (A + rOff), z = Math.sin(t) * (B + rOff * 0.6);
+  const dx = -Math.sin(t), dz = Math.cos(t);
+  return { x, z, dx, dz };
+}
+// 馬モデル: "Bay Horse" by vinish.dev, CC BY 4.0（軽量化・毛色変更の改変あり）
+let horseTemplate = null; // { scene, animations }
+const modelReady = (async () => {
+  try {
+    const gltf = await new GLTFLoader().loadAsync('assets/bay-horse.glb');
+    horseTemplate = { scene: gltf.scene, animations: gltf.animations };
+    console.log('horse GLB loaded:', gltf.animations.map(a => a.name).join(','));
+  } catch (e) {
+    console.warn('horse GLB load failed, fallback to simple mesh:', e);
+    horseTemplate = null;
+  }
+  return horseTemplate;
+})();
+// 毛色ティント（Coatマテリアルへの乗算）。0番は素の鹿毛
+const COAT_TINTS = [
+  [1, 1, 1], [0.62, 0.45, 0.36], [0.30, 0.28, 0.31], [0.82, 0.82, 0.87],
+  [1.0, 0.74, 0.52], [0.92, 0.72, 0.46], [0.55, 0.36, 0.26], [0.86, 0.62, 0.60],
+  [0.72, 0.52, 0.34], [0.45, 0.33, 0.30], [1.0, 0.88, 0.70], [0.66, 0.60, 0.58],
+];
+function makeModelHorse(tintIdx) {
+  const group = SkeletonUtils.clone(horseTemplate.scene);
+  const tint = COAT_TINTS[tintIdx % COAT_TINTS.length];
+  group.traverse(o => {
+    if ((o.isMesh || o.isSkinnedMesh) && o.material) {
+      o.material = Array.isArray(o.material) ? o.material.map(m => m.clone()) : o.material.clone();
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) if (m.name === 'Coat') m.color.setRGB(tint[0], tint[1], tint[2]);
+    }
+  });
+  const mixer = new THREE.AnimationMixer(group);
+  const actions = {};
+  for (const name of ['Idle', 'Gallop']) {
+    const clip = THREE.AnimationClip.findByName(horseTemplate.animations, name);
+    if (clip) { actions[name] = mixer.clipAction(clip); }
+  }
+  if (actions.Idle) actions.Idle.play();
+  group.userData.anim = { mixer, actions, current: 'Idle' };
+  return group;
+}
+function setHorseAnim(mesh, name, fade = 0.3) {
+  const anim = mesh.userData.anim;
+  if (!anim || anim.current === name || !anim.actions[name]) return;
+  const next = anim.actions[name];
+  next.reset().setEffectiveWeight(1).play();
+  if (anim.actions[anim.current]) next.crossFadeFrom(anim.actions[anim.current], fade, false);
+  anim.current = name;
+}
+function makeHorseMesh(color) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.62, 1.7), mat); body.position.y = 1.25; g.add(body);
+  const neck = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.8, 0.4), mat); neck.position.set(0, 1.75, 1.0); neck.rotation.x = -0.6; g.add(neck);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.3, 0.7), mat); head.position.set(0, 2.05, 1.35); g.add(head);
+  const legGeo = new THREE.BoxGeometry(0.11, 1.0, 0.11);
+  [[-0.18, 0.65], [0.18, 0.65], [-0.18, -0.65], [0.18, -0.65]].forEach(([x, z]) => {
+    const leg = new THREE.Mesh(legGeo, mat); leg.position.set(x, 0.5, z); leg.name = 'leg'; g.add(leg);
+  });
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.8, 0.1), new THREE.MeshLambertMaterial({ color: 0x222222 }));
+  tail.position.set(0, 1.5, -0.95); tail.rotation.x = 0.5; g.add(tail);
+  return g;
+}
+function initThree() {
+  if (renderer) return;
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87b5d9);
+  camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 2000);
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(innerWidth, innerHeight);
+  $('raceWrap').appendChild(renderer.domElement);
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(600, 40), new THREE.MeshLambertMaterial({ color: 0x5d8a3c }));
+  ground.rotation.x = -Math.PI / 2; scene.add(ground);
+  const dirt = new THREE.Mesh(new THREE.RingGeometry(0.86, 1.14, 64), new THREE.MeshLambertMaterial({ color: 0x9a7b52 }));
+  dirt.rotation.x = -Math.PI / 2; dirt.scale.set(A, B, 1); dirt.position.y = 0.02; scene.add(dirt);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(50, 120, 30); scene.add(sun);
+  addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+}
+let fieldReady = Promise.resolve();
+function startCountdown(m) {
+  raceStartAt = m.startAt;
+  $('screenLobby').classList.add('hidden'); $('screenHome').classList.add('hidden');
+  $('raceWrap').classList.remove('hidden');
+  initThree();
+  // モデルの読み込み完了（最大6秒）を待ってから馬を配置する
+  fieldReady = Promise.race([modelReady, new Promise(r => setTimeout(() => r(null), 6000))])
+    .then(() => setupField(m.field));
+  let lastLeft = null;
+  const iv = setInterval(() => {
+    const left = Math.ceil((raceStartAt - Date.now()) / 1000);
+    if (left !== lastLeft) { if (left > 0) sfx('beep'); lastLeft = left; }
+    $('hudCount').textContent = left > 0 ? left : 'スタート！';
+    if (left <= 0 && !$('hudCount').dataset.fanfared) { $('hudCount').dataset.fanfared = '1'; sfx('fanfare'); }
+    if (left <= -1) { $('hudCount').textContent = ''; delete $('hudCount').dataset.fanfared; clearInterval(iv); }
+  }, 200);
+}
+function setupField(field) {
+  horseMeshes.forEach(m => scene.remove(m)); horseMeshes.clear(); runners.clear();
+  const colors = [0x6d4c41, 0x4e342e, 0x795548, 0x3e2723, 0x8d6e63, 0x5d4037];
+  field.forEach((f, i) => {
+    let mesh;
+    if (horseTemplate) { mesh = makeModelHorse(i); }
+    else { mesh = makeHorseMesh(colors[f.lane % colors.length]); mesh.userData.fallback = true; }
+    scene.add(mesh); horseMeshes.set(f.nickname, mesh);
+    runners.set(f.nickname, { dist: 0, lane: f.lane, npc: f.npc, smoothDist: 0, prevSmooth: 0, animSpeed: 0 });
+    if (f.nickname === myName) { myLane = f.lane; myHorseMesh = mesh; }
+  });
+  myDist = 0; mySpeed = 0; stamina = 100; pace = 1; whipLeft = 3; whipUntil = 0;
+  setPace(1);
+  $('btnWhip').textContent = `ムチ（残り${whipLeft}）`;
+}
+function beginRace(field) {
+  if (!renderer) { $('screenLobby').classList.add('hidden'); $('raceWrap').classList.remove('hidden'); initThree(); fieldReady = modelReady.then(() => setupField(field)); }
+  fieldReady.then(() => {
+    horseMeshes.forEach(mesh => setHorseAnim(mesh, 'Gallop'));
+    racing = true; lastFrame = performance.now();
+    posTimer = setInterval(() => send({ type: 'pos', dist: myDist, lane: myLane, speed: mySpeed }), 100);
+    requestAnimationFrame(frameLoop);
+  });
+}
+function applyState(list) {
+  for (const r of list) {
+    if (r.nickname === myName) continue;
+    const cur = runners.get(r.nickname);
+    if (cur) { cur.dist = r.dist; cur.lane = r.lane; }
+  }
+}
+const PACE_SPEED = [13.5, 15.8, 17.0, 18.2];
+const PACE_DRAIN = [-2.5, 0.8, 3.2, 6.0]; // おさえるで微回復
+function sectionName(p) {
+  if (p < 0.08) return 'スタート 〜 第1コーナー';
+  if (p < 0.20) return '第2コーナー';
+  if (p < 0.50) return '向正面';
+  if (p < 0.63) return '第3コーナー';
+  if (p < 0.80) return '第4コーナー';
+  return '最後の直線';
+}
+function frameLoop(now) {
+  if (!racing) return;
+  const dt = Math.min(0.05, (now - lastFrame) / 1000); lastFrame = now;
+  // 自分の馬の物理（簡易）
+  stamina = Math.max(0, Math.min(100, stamina - PACE_DRAIN[pace] * dt));
+  let target = PACE_SPEED[pace];
+  if (performance.now() < whipUntil) target = 20.5; // ムチ: 短時間ブースト（サーバー上限22m/sの範囲内）
+  if (stamina < 25) target *= 0.75 + stamina / 100; // スタミナ切れで失速
+  mySpeed += (target - mySpeed) * Math.min(1, dt * 1.6);
+  myLanePos += ((myLane - 8.5) - myLanePos) * Math.min(1, dt * 2);
+  if (myDist < TRACK_LEN) myDist += mySpeed * dt;
+  // 他馬の補間
+  for (const [name, r] of runners) {
+    if (name !== myName) {
+      const prev = r.smoothDist;
+      r.smoothDist += (r.dist - r.smoothDist) * Math.min(1, dt * 6);
+      r.animSpeed = dt > 0 ? (r.smoothDist - prev) / dt : 0;
+    }
+  }
+  // 描画
+  const gallop = Math.sin(now * 0.02) * 0.35;
+  for (const [name, r] of runners) {
+    const mesh = horseMeshes.get(name); if (!mesh) continue;
+    const d = name === myName ? myDist : r.smoothDist;
+    const p = trackPoint(d, r.lane);
+    mesh.position.set(p.x, mesh.userData.fallback ? Math.abs(Math.sin(now * 0.02)) * 0.06 : 0, p.z);
+    mesh.rotation.y = Math.atan2(p.dx, p.dz);
+    if (mesh.userData.fallback) mesh.children.forEach(c => { if (c.name === 'leg') c.rotation.x = gallop; });
+    // GLBモデルのアニメーション（Gallopクリップを速度に合わせて再生）
+    const anim = mesh.userData.anim;
+    if (anim) {
+      const spd = name === myName ? mySpeed : r.animSpeed;
+      if (anim.actions.Gallop) anim.actions.Gallop.timeScale = THREE.MathUtils.clamp(spd / 15, 0.5, 1.7);
+      anim.mixer.update(dt);
+    }
+  }
+  // 一人称カメラ（自分の馬の騎手位置。首・耳が視界に入る位置）
+  const me = trackPoint(myDist, myLane);
+  camera.position.set(me.x - me.dx * 0.85, 2.55, me.z - me.dz * 0.85);
+  camera.lookAt(me.x + me.dx * 30, 1.55, me.z + me.dz * 30);
+  if (myHorseMesh) { const p = trackPoint(myDist, myLane); myHorseMesh.position.set(p.x, 0, p.z); myHorseMesh.rotation.y = Math.atan2(p.dx, p.dz); }
+  // HUD（1人用版に合わせ: 大きな残り距離＋区間名＋距離バー＋順位＋スタミナ）
+  const sorted = [...runners.entries()].map(([n, r]) => [n, n === myName ? myDist : r.dist]).sort((a, b) => b[1] - a[1]);
+  const place = sorted.findIndex(([n]) => n === myName) + 1;
+  const prog = Math.min(1, myDist / TRACK_LEN);
+  $('hudRemain').textContent = `残り ${Math.max(0, Math.ceil(TRACK_LEN - myDist)).toLocaleString()}m`;
+  $('hudSection').textContent = sectionName(prog);
+  $('distFill').style.width = (prog * 100) + '%';
+  $('hudPos').textContent = `${place} 位`;
+  const sf = $('staminaFill');
+  sf.style.width = stamina + '%';
+  sf.style.background = stamina > 50 ? '#7cb342' : stamina > 25 ? '#f9a825' : '#e53935';
+  renderer.render(scene, camera);
+  requestAnimationFrame(frameLoop);
+}
+function setPace(p) {
+  pace = p;
+  document.querySelectorAll('[data-pace]').forEach(b => b.classList.toggle('active', Number(b.dataset.pace) === p));
+}
+document.querySelectorAll('[data-pace]').forEach(b => b.onclick = () => setPace(Number(b.dataset.pace)));
+$('btnWhip').onclick = () => {
+  if (!racing || whipLeft <= 0 || stamina < 10) return;
+  whipLeft--; whipUntil = performance.now() + 1200; stamina = Math.max(0, stamina - 8);
+  $('btnWhip').textContent = `ムチ（残り${whipLeft}）`;
+  $('btnWhip').disabled = whipLeft <= 0;
+};
+$('btnLeft').onclick = () => { myLane = Math.max(0, myLane - 1); };
+$('btnRight').onclick = () => { myLane = Math.min(17, myLane + 1); };
+addEventListener('keydown', e => {
+  if (!racing) return;
+  if (e.key === 'ArrowLeft') myLane = Math.max(0, myLane - 1);
+  if (e.key === 'ArrowRight') myLane = Math.min(17, myLane + 1);
+  if (e.key >= '1' && e.key <= '4') setPace(Number(e.key) - 1);
+});
+
+/* ---------- 結果 ---------- */
+function showResults(standings) {
+  racing = false; clearInterval(posTimer);
+  sfx('goal');
+  const me = standings.find(s => s.nickname === myName);
+  // ゴールフラッシュ（1人用版と同じく着順を画面中央に大きく表示してから結果へ）
+  const flash = $('goalFlash');
+  if (me) { flash.textContent = `${me.place}着！`; flash.classList.remove('hidden'); }
+  setTimeout(() => {
+    flash.classList.add('hidden');
+    $('raceWrap').classList.add('hidden');
+    $('screenResult').classList.remove('hidden');
+    $('btnAgain').textContent = soloMode ? 'ホームに戻る' : 'ロビーに戻る';
+    $('resultTable').innerHTML = '<tr><th>着順</th><th>騎手</th><th>馬</th><th>タイム/賞金</th></tr>' +
+      standings.map(s => `<tr${s.nickname === myName ? ' style="background:rgba(255,213,79,.25)"' : ''}><td>${s.place}着</td><td>${s.nickname}</td><td>${s.horseName}</td><td>${s.time ? s.time + '秒' : '—'}${s.prize ? ' ／ +' + s.prize + 'G' : ''}</td></tr>`).join('');
+    // 賞金反映後のプロフィールは次回welcome/再接続で更新されるため、結果画面でも残高表示を合わせる
+    if (me && profile) { profile.balance += me.prize || 0; profile.races += 1; if (me.place === 1) profile.wins += 1; refreshWallet(); }
+  }, me ? 1800 : 0);
+}
+$('btnAgain').onclick = () => {
+  if (soloMode) { send({ type: 'leaveRoom' }); localStorage.removeItem('km_room'); showHome(); }
+  else send({ type: 'backToLobby' });
+};
+</script>
+</body>
+</html>

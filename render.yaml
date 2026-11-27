@@ -1,0 +1,35 @@
+# Render デプロイ設定（無料枠前提）
+# 使い方: Render ダッシュボードで New > Blueprint を選び、このリポジトリを指定すると
+# このファイルの内容で Web Service が作成される。手動作成でも設定値は同じ。
+services:
+  - type: web
+    name: keiba-multiplayer
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # プレイヤーデータの保存先（推奨）: Supabase（PostgreSQL）の接続文字列。
+      # sync: false のため値はリポジトリに残らず、Render ダッシュボードで入力する。
+      # 設定すると再デプロイ・再起動してもデータが消えなくなる（無料のまま）。
+      # 取得手順は README の「データ保存（外部DB）」を参照。
+      - key: DATABASE_URL
+        sync: false
+      # ポートは Render が PORT 環境変数を自動で渡すため指定不要（サーバーは PORT 対応済み）
+      #
+      # ⚠ DATABASE_URL を設定しない場合の注意点:
+      # 無料枠の Web Service には永続ディスクが付かない（ディスクは有料）ため、
+      # ファイル保存（data/players.json）のままだと再デプロイ・再起動で
+      # プレイヤーデータが初期化される。代替策として有料プランで Disk を追加し、
+      # 下記の disk 設定を有効化して DATA_DIR=/var/data にする方法もある。
+      # 有料ディスクを使う場合の設定例（plan を有料に変えてから有効化すること）:
+      # disk:
+      #   name: keiba-data
+      #   mountPath: /var/data
+      #   sizeGB: 1
+      # envVars に追加:
+      #   - key: DATA_DIR
+      #     value: /var/data
