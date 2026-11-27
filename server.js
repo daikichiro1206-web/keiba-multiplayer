@@ -313,7 +313,10 @@ const server = http.createServer((req, res) => {
   if (!file.startsWith(PUBLIC_DIR) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     res.writeHead(404); res.end('not found'); return;
   }
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+  // ?v= 付きアセットは内容が変わらない前提で長期キャッシュ、それ以外（HTML含む）は
+  // 毎回検証させ、モデルやコードの差し替えが実機に届かない事故を防ぐ
+  const cacheCtl = req.url.includes('?v=') ? 'public, max-age=31536000, immutable' : 'no-cache';
+  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': cacheCtl });
   fs.createReadStream(file).pipe(res);
 });
 
