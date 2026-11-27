@@ -315,7 +315,8 @@ const server = http.createServer((req, res) => {
       season: p.season.n,
     });
   })) return;
-  const file = path.join(PUBLIC_DIR, req.url === '/' ? 'index.html' : req.url.split('?')[0]);
+  const urlPath = req.url.split('?')[0]; // クエリ付きの '/' でも index.html を返す（旧実装は '/?dbg' 等が404になっていた）
+  const file = path.join(PUBLIC_DIR, urlPath === '/' ? 'index.html' : urlPath);
   if (!file.startsWith(PUBLIC_DIR) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     res.writeHead(404); res.end('not found'); return;
   }
