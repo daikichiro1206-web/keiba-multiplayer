@@ -813,7 +813,7 @@ function initPreview() {
   pvRenderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   pvRenderer.setSize(canvas.clientWidth || 640, 220, false);
   pvRenderer.toneMapping = THREE.ACESFilmicToneMapping;
-  pvRenderer.toneMappingExposure = 0.86; // 1人用版と同じ落ち着いたトーン
+  pvRenderer.toneMappingExposure = 0.95; // プレビューは1人用プレビューと同値
   pvScene = new THREE.Scene();
   pvScene.background = new THREE.Color(0xa7bccf);
   pvCamera = new THREE.PerspectiveCamera(45, (canvas.clientWidth || 640) / 220, 0.1, 100);
@@ -821,8 +821,8 @@ function initPreview() {
   pvCamera.lookAt(0, 1.0, 0);
   const ground = new THREE.Mesh(new THREE.CircleGeometry(7, 32), new THREE.MeshStandardMaterial({ color: 0x74905c, roughness: 1 }));
   ground.rotation.x = -Math.PI / 2; pvScene.add(ground);
-  pvScene.add(new THREE.HemisphereLight(0xc4d6e2, 0x4c5540, 0.5));
-  const sun = new THREE.DirectionalLight(0xffe9c2, 1.6); sun.position.set(4, 8, 3); pvScene.add(sun);
+  pvScene.add(new THREE.HemisphereLight(0xcfe2ee, 0x54604a, 0.75)); // 1人用プレビューと同値
+  const sun = new THREE.DirectionalLight(0xffe9c2, 1.9); sun.position.set(3, 6, 2.5); pvScene.add(sun);
   pvGroup = new THREE.Group(); pvScene.add(pvGroup);
   pvLast = performance.now();
   requestAnimationFrame(pvLoop);
@@ -1073,13 +1073,18 @@ function trackPoint(dist, lane) {
    ここを1人用の形のままコピーしたのが「左右操作が反転する」バグの原因。 */
 const laneToLat = lane => (8.5 - lane) * LANE_W;   // レーン番号(連続値) → 横位置(m)。正=内=画面右
 const latToLane = lat => 8.5 - lat / LANE_W;
-/* コーナー係数（1人用の cornerFactor を楕円の曲率半径で近似）:
-   内は距離が短く、外はロスする。引数 lat は物理レーン基準（外が正）で渡すこと */
+/* コーナー係数: 1人用 cornerFactor そのもの（直線＋半径110mの半円コーナー。
+   コーナー区間だけ 110/(110+lat)、直線は1）。旧版は見た目の楕円コースの曲率を
+   全周に適用していたため、直線でも内有利が効いてサーバーNPC（1人用モデルに
+   統一）とも自機の物理がずれていた。区間判定は sectionName と同じ
+   LAP_STRAIGHT/LAP_ARC（サーバー npcIsCorner と同一境界）。
+   引数 lat は物理レーン基準（外が正）で渡すこと */
+function isCornerAt(dist) {
+  const s = ((dist + physOff()) % TRACK_LEN + TRACK_LEN) % TRACK_LEN;
+  return (s >= 654.5 && s < 654.5 + 345.6) || s >= 654.5 * 2 + 345.6;
+}
 function cornerFactorAt(dist, lat) {
-  const t = ((dist + physOff()) / TRACK_LEN) * Math.PI * 2;
-  const s = Math.sin(t), c = Math.cos(t);
-  const rho = Math.pow((A * s) * (A * s) + (B * c) * (B * c), 1.5) / (A * B); // 曲率半径
-  return rho / (rho + lat);
+  return isCornerAt(dist) ? 110 / (110 + lat) : 1;
 }
 
 /* 馬ごとの色（毛色・たてがみ・勝負服・帽子）: 1人用 DEFS の値をそのまま採用 */
@@ -1394,13 +1399,24 @@ function makeGrassCanvas(stripeA, stripeB, patchCols, blades) {
   g.globalAlpha = 1;
   return c;
 }
-let grassCanvasCache = null;
-function grassTexture(rx, ry) {
-  if (!grassCanvasCache) {
-    grassCanvasCache = makeGrassCanvas('#639349', '#4c7a35',
-      ['#6d9a52', '#4c7834', '#7a9a4e', '#5d8547', '#8a9a58', '#527a38'], 30000);
+let grassCanvasCache = null, infieldCanvasCache = null;
+function grassTexture(rx, ry, infield = false) {
+  // 内馬場は1人用と同じく一段深い緑の専用キャンバス（外周の芝より落ち着いた色）
+  let cv;
+  if (infield) {
+    if (!infieldCanvasCache) {
+      infieldCanvasCache = makeGrassCanvas('#5c8a41', '#477233',
+        ['#649250', '#426e2f', '#759a52', '#557f3c', '#7f9a55', '#4a7534'], 42000);
+    }
+    cv = infieldCanvasCache;
+  } else {
+    if (!grassCanvasCache) {
+      grassCanvasCache = makeGrassCanvas('#639349', '#4c7a35',
+        ['#6d9a52', '#4c7834', '#7a9a4e', '#5d8547', '#8a9a58', '#527a38'], 30000);
+    }
+    cv = grassCanvasCache;
   }
-  const t = new THREE.CanvasTexture(grassCanvasCache);
+  const t = new THREE.CanvasTexture(cv);
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry);
   t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
   return t;
@@ -1852,14 +1868,14 @@ function initThree() {
   const ground = new THREE.Mesh(new THREE.CircleGeometry(1460, 48), new THREE.MeshStandardMaterial({ map: grassTexture(90, 90), color: 0xc9ccc0, roughness: 1 }));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -0.03; ground.receiveShadow = true; scene.add(ground);
   // 内馬場の芝
-  const infield = new THREE.Mesh(new THREE.CircleGeometry(1, 64), new THREE.MeshStandardMaterial({ map: grassTexture(46, 46), color: 0xd8dbce, roughness: 1 }));
+  const infield = new THREE.Mesh(new THREE.CircleGeometry(1, 64), new THREE.MeshStandardMaterial({ map: grassTexture(46, 46, true), color: 0xe3e8da, roughness: 1 })); // 専用の深緑キャンバス＋色味は1人用と同値
   infield.rotation.x = -Math.PI / 2; infield.scale.set(A - 12.5, B - 12.5, 1); infield.position.y = 0.0; infield.receiveShadow = true; scene.add(infield);
   // ダートコース（1人用の写真風ダート: 蹄跡・ハロー目・踏み荒らし帯＋バンプで凹凸感）
   const dirtTex = new THREE.CanvasTexture(makeDirtCanvas());
   dirtTex.wrapS = dirtTex.wrapT = THREE.RepeatWrapping; dirtTex.colorSpace = THREE.SRGBColorSpace; dirtTex.anisotropy = 8;
   const dirtBumpTex = new THREE.CanvasTexture(makeDirtBumpCanvas());
   dirtBumpTex.wrapS = dirtBumpTex.wrapT = THREE.RepeatWrapping;
-  dirtMatRef = new THREE.MeshStandardMaterial({ map: dirtTex, bumpMap: dirtBumpTex, bumpScale: 0.9, color: 0xd8c6a2, roughness: 1 });
+  dirtMatRef = new THREE.MeshStandardMaterial({ map: dirtTex, bumpMap: dirtBumpTex, bumpScale: 0.9, color: 0xbaa27e, roughness: 1 }); // 色味は1人用と同値（旧 0xd8c6a2 は白っぽく洗い出されて見えた）
   // ダート幅・白線・ラチ位置は1人用と同一寸法（TRACK_HW=11.5、ラチは +0.9）。
   // 横位置クランプ LAT_MAX=9.7 は元々1人用と同値で、最内まで寄せたときの
   // 余白は ダート端まで 11.5-9.69≒1.8m / ラチまで 12.4-9.69≒2.7m になる。
@@ -1891,6 +1907,7 @@ function initThree() {
 const DEBUG_ORBIT = new URLSearchParams(location.search).has('orbit'); // 検証用: 俯瞰カメラ（通信・判定には無関係）
 let horseMeshes = new Map(); // nickname -> mesh
 let myDist = 0, myLat = 0, targetLat = 0, latVel = 0, mySpeed = 0, stamina = 100;
+let myPhase = 0; // 自馬の歩様位相（1人用 player.phase と同じく距離で進める。一人称の揺れと騎手の上下動の基準）
 let paceKey = 'nari', whipsUsed = 0, whipUntil = 0, whipCdUntil = 0, paceHeat = 0;
 let myRank = 18, fieldSize = 18, myFinished = false, finishFlashAt = 0;
 let steerL = false, steerR = false;
@@ -1963,7 +1980,7 @@ function applyRaceMeta(meta) {
   raceNameNow = meta.raceName || ''; raceCatNow = meta.category || '';
   nextGrade = meta.grade || nextGrade;
   $('condTag').textContent = raceGoing.name; // 1人用と同じく「良馬場」等の表示名そのまま
-  if (dirtMatRef) dirtMatRef.color.set(raceGoing.id === 'ju' ? 0x77603f : raceGoing.id === 'yaya' ? 0xa1845b : 0xd8c6a2);
+  if (dirtMatRef) dirtMatRef.color.set(raceGoing.id === 'ju' ? 0x77603f : raceGoing.id === 'yaya' ? 0xa1845b : 0xb2966c); // 馬場別の色は1人用と同値（良の旧値 0xd8c6a2 は白すぎた）
   // 距離バーの目印はレース距離に合わせて置き直す（1人用 setRaceDistance と同じ式）
   const d = RACE_DIST;
   const marks = document.querySelectorAll('#distTrack .dmk');
@@ -2008,7 +2025,7 @@ function setupField(field) {
   horseMeshes.forEach(m => scene.remove(m));
   horseMeshes.clear(); runners.clear(); barDots.forEach(d => d.remove()); barDots.clear();
   fieldSize = field.length;
-  myDist = 0; myLat = 0; targetLat = 0; latVel = 0; mySpeed = 0; stamina = 100;
+  myDist = 0; myLat = 0; targetLat = 0; latVel = 0; mySpeed = 0; stamina = 100; myPhase = 0;
   paceKey = 'nari'; whipsUsed = 0; whipUntil = 0; whipCdUntil = 0; paceHeat = 0;
   myFinished = false; finishFlashAt = 0; myRank = fieldSize; raceClock = 0; sendAcc = 0;
   slipActive = false; lookYaw = 0; lookHeld = null; dragYaw = 0;
@@ -2034,6 +2051,7 @@ function setupField(field) {
     runners.set(f.nickname, {
       dist: 0, lane: f.lane, speed: 0, npc: f.npc, horseId: f.horseId,
       smoothDist: 0, smoothLane: f.lane, animSpeed: 0, phase: Math.random() * 6,
+      visLatOff: 0, laneVel: 0, stateAt: 0,
       style: f.style || '先行', jockey: f.jockey || '', horseName: f.horseName || '',
     });
     let mesh;
@@ -2369,7 +2387,7 @@ function showGoalFlash(place, label) {
 function runnerWorld(nick) {
   const r = runners.get(nick); if (!r) return null;
   const isMe = nick === myName && !watchMode;
-  const d = isMe ? myDist : r.smoothDist, lane = isMe ? latToLane(myLat) : r.smoothLane;
+  const d = isMe ? myDist : r.smoothDist, lane = isMe ? latToLane(myLat) : renderLaneOf(r);
   const p = trackPoint(d, lane);
   return { ...p, dist: d, r };
 }
@@ -2418,7 +2436,7 @@ function updateWatchCamera(dt) {
     camera.lookAt(lp.x, 1.4, lp.z);
   }
   if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 5); camera.updateProjectionMatrix(); }
-  if (sunLight) { sunLight.position.set(lp.x + 20, 96, lp.z + 12); sunLight.target.position.set(lp.x, 0, lp.z); }
+  if (sunLight) { sunLight.position.set(lp.x + 40, 190, lp.z + 60); sunLight.target.position.set(lp.x, 0, lp.z); }
   watchFocusNick = (camMode === 'bet' && betState && betState.picks.length)
     ? (([...runners.entries()].find(([, r]) => betState.picks.includes(r.horseName)) || [])[0] || lead) : lead;
 }
@@ -2576,8 +2594,31 @@ function applyState(list) {
   list.forEach(r => {
     const run = runners.get(r.nickname);
     if (!run) return;
+    // レーンの変化率から横速度を推定（補間のデッドレコニング用）
+    const nowMs = performance.now();
+    if (run.stateAt) {
+      const dtS = Math.max(0.03, (nowMs - run.stateAt) / 1000);
+      run.laneVel = clamp((r.lane - run.lane) / dtS, -1.2, 1.2);
+    }
+    run.stateAt = nowMs;
     run.dist = r.dist; run.lane = r.lane; run.speed = r.speed || 0;
   });
+}
+/* 他馬の補間（デッドレコニング付き）: 10Hz配信をそのまま指数平滑すると
+   速度ぶんだけ描画位置が遅れる（実測で平均 約3.3m）。配信に含まれる速度と
+   推定した横速度で「今この瞬間の推定位置」を平滑の目標にし、遅れを消す。
+   外挿ホライズン = 前回配信からの経過時間 ＋ 平滑の追従遅れ（率6/s の
+   時定数 1/6 秒）、合計で最大0.30秒に制限（行き過ぎ防止）。実測では
+   平均遅れ 約3.3m → 約0.2m になり、画面上の隊列がサーバーの隊列
+   （＝1人用の展開）とほぼ一致する。 */
+function smoothRunner(r, dt, now) {
+  const age = r.stateAt ? Math.min(0.30, Math.max(0, (now - r.stateAt) / 1000) + 1 / 6) : 0;
+  const tDist = r.dist + (r.speed || 0) * age;
+  const tLane = r.lane + (r.laneVel || 0) * age;
+  const prev = r.smoothDist;
+  r.smoothDist += (tDist - r.smoothDist) * Math.min(1, dt * 6);
+  r.smoothLane += (tLane - r.smoothLane) * Math.min(1, dt * 6);
+  r.animSpeed = dt > 0 ? (r.smoothDist - prev) / dt : 0;
 }
 function raceLoop(now) {
   if (!racing) return;
@@ -2601,6 +2642,10 @@ function raceLoop(now) {
     }
   } else {
     stepPhysics(dt, now);
+    // 歩様位相を1人用 stepHorse と同じく距離で進める（strideLen は速度連動）
+    const sfPhase = clamp(mySpeed / 17, 0, 1.15);
+    if (mySpeed > 0.3) myPhase += dt * mySpeed / (2.6 + sfPhase * 2.6) * Math.PI * 2;
+    else myPhase += dt * 0.7;
     checkInterference(dt);
     // サーバーへ位置送信（約20Hz。速度上限チェックに引っかからない通常送信間隔）
     sendAcc += dt;
@@ -2610,14 +2655,12 @@ function raceLoop(now) {
     }
     flashCheck(myName, '');
   }
-  // 他馬の補間
+  // 他馬の補間（デッドレコニング付き smoothRunner）
   runners.forEach((r, nick) => {
     if (nick === myName) return;
-    const prev = r.smoothDist;
-    r.smoothDist += (r.dist - r.smoothDist) * Math.min(1, dt * 6);
-    r.smoothLane += (r.lane - r.smoothLane) * Math.min(1, dt * 6);
-    r.animSpeed = dt > 0 ? (r.smoothDist - prev) / dt : 0;
+    smoothRunner(r, dt, now);
   });
+  updateVisOffsets(dt);
   recordReplay(dt);
   updateGateDoors(dt);
   towGate(dt);
@@ -2632,20 +2675,79 @@ function raceLoop(now) {
   }
   renderer.render(scene, camera);
 }
+/* ---------- 描画専用の馬同士の分離（すり抜け対策） ----------
+   サーバーの権威位置はサブステップ化で1人用並みに解消されるが、他馬の描画は
+   10Hz配信＋指数平滑の補間を通るため、補間の遅れが馬ごとに違うぶんだけ
+   画面上では一瞬重なって見えることがある。そこで「見た目位置同士」でも
+   重なりを解消するオフセットを描画専用に持つ。smoothDist/smoothLane には
+   一切触れないので、反則判定（checkInterference）・順位・リプレイ記録・
+   サーバー同期には影響しない。押し出しの上限速度 2.2m/s と接触寸法は
+   1人用 checkInterference の物理分離が目安。 */
+const VIS_MIN_LAT = 0.95;  // 見た目で確保する横間隔（馬体幅＋余裕）
+const VIS_LEN = 2.6;       // この縦距離以内なら横の重なりを解消する
+function renderLaneOf(r) { return latToLane(laneToLat(r.smoothLane) + (r.visLatOff || 0)); }
+function updateVisOffsets(dt) {
+  const items = [];
+  runners.forEach((r, nick) => {
+    const isSelf = nick === myName && !watchMode;
+    items.push({
+      r, self: isSelf,
+      dist: isSelf ? myDist : r.smoothDist,
+      lat: isSelf ? myLat : laneToLat(r.smoothLane),
+    });
+  });
+  const push = new Map();
+  const addPush = (r, v) => push.set(r, (push.get(r) || 0) + v);
+  for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
+    const a = items[i], b = items[j];
+    const dd = b.dist - a.dist;
+    if (Math.abs(dd) >= VIS_LEN) continue;
+    const la = a.lat + (a.self ? 0 : a.r.visLatOff || 0);
+    const lb = b.lat + (b.self ? 0 : b.r.visLatOff || 0);
+    const ld = lb - la;
+    if (Math.abs(ld) >= VIS_MIN_LAT) continue;
+    const dir = ld === 0 ? (j % 2 ? 1 : -1) : Math.sign(ld);
+    const need = (VIS_MIN_LAT - Math.abs(ld)) * (1 - Math.abs(dd) / VIS_LEN);
+    if (a.self) addPush(b.r, dir * need);
+    else if (b.self) addPush(a.r, -dir * need);
+    else { addPush(a.r, -dir * need / 2); addPush(b.r, dir * need / 2); }
+  }
+  const maxStep = 2.2 * dt;
+  runners.forEach((r, nick) => {
+    if (nick === myName && !watchMode) return;
+    if (push.has(r)) {
+      const target = clamp((r.visLatOff || 0) + push.get(r), -0.85, 0.85);
+      r.visLatOff += clamp(target - r.visLatOff, -maxStep, maxStep);
+    } else {
+      // 重なりが無ければ権威位置（オフセット0）へなだらかに戻す
+      r.visLatOff = (r.visLatOff || 0) + clamp(0 - (r.visLatOff || 0), -maxStep * 0.6, maxStep * 0.6);
+    }
+  });
+}
 function updateMeshes(dt) {
   runners.forEach((r, nick) => {
     const mesh = horseMeshes.get(nick); if (!mesh) return;
     const isMe = nick === myName;
     const d = isMe ? myDist : r.smoothDist;
-    const lane = isMe ? latToLane(myLat) : r.smoothLane;
+    const lane = isMe ? latToLane(myLat) : renderLaneOf(r);
     const p = trackPoint(d, lane);
     mesh.position.set(p.x, 0, p.z);
     mesh.rotation.y = Math.atan2(p.dx, p.dz);
     const spd = isMe ? mySpeed : r.animSpeed;
+    // 歩様位相（1人用 stepHorse と同じく距離で進める）と速度係数
+    const sfH = clamp(spd / 17, 0, 1.15);
+    if (!isMe) {
+      if (spd > 0.3) r.phase += dt * spd / (2.6 + sfH * 2.6) * Math.PI * 2;
+      else r.phase += dt * 0.7;
+    }
     const anim = mesh.userData.anim;
     if (anim) {
       if (racing && spd > 0.5) setHorseAnim(mesh, 'Gallop');
-      anim.mixer.update(dt * (0.55 + Math.max(0, spd) * 0.055));
+      // ギャロップ再生速度は1人用 stepHorse の式そのまま（0.12 + sf*1.05）。
+      // Gallopクリップは0.5秒=1歩周期なので、全速で約2.3歩/秒＝実馬の歩様
+      // ケイデンスに合う。旧式（0.55 + 速度*0.055）は特に低〜中速で脚だけが
+      // 速く回り、地面とズレて「滑って」見えた
+      anim.mixer.update(dt * (0.12 + sfH * 1.05));
     }
     if (mesh.userData.fallback) {
       mesh.children.forEach(c => { if (c.name === 'leg') c.rotation.x = Math.sin(raceClock * 10 + r.phase) * 0.5; });
@@ -2655,7 +2757,10 @@ function updateMeshes(dt) {
     if (vis) {
       const crouch = clamp((spd - 12) / 6, 0, 1) * (paceKey === 'pushL' && isMe ? 1 : 0.75);
       vis.jock.rotation.x = crouch * 0.16;
-      vis.jock.position.y = 1.66 + Math.sin(raceClock * 9 + r.phase) * 0.012;
+      // 騎手の上下動も歩様位相に同期（1人用: 懸垂の跳ね＋着地の沈み）
+      const ph = isMe ? myPhase : r.phase;
+      const susp = Math.pow(Math.max(0, Math.sin(ph - 0.55)), 2);
+      vis.jock.position.y = 1.66 + susp * 0.05 * sfH + Math.abs(Math.sin(ph)) * 0.02;
       if (racing || d > 0) vis.updateBridle();
     }
   });
@@ -2676,7 +2781,7 @@ function orbitCamera(dist) {
   }
   const p = trackPoint(dist, latToLane(myLat));
   if (sunLight) {
-    sunLight.position.set(p.x + 20, 96, p.z + 12);
+    sunLight.position.set(p.x + 40, 190, p.z + 60);
     sunLight.target.position.set(p.x, 0, p.z);
   }
 }
@@ -2687,27 +2792,44 @@ function updateCamera(dt) {
   // 画面右ベクトルは (-dz, dx)（1人用カメラと同じ）。(dz, -dx) は画面左で、
   // 見回しが反転する原因だった
   const rightX = -fwdZ, rightZ = fwdX;
-  const sf = clamp((mySpeed - 14.5) / 4.5, 0, 1);
-  const bobY = Math.sin(raceClock * 8.6) * 0.028 + Math.sin(raceClock * 17.2) * 0.012;
+  /* 一人称の揺れは1人用 updateCamera そのまま: 時計ベースの sin ではなく、
+     自馬の歩様位相（myPhase、距離で進む）に同期させる。旧版は
+     raceClock*8.6（約1.4Hz固定）で、実際の歩様（全速で約3.3周期/秒、
+     GLBのギャロップは約2.3歩/秒）とも速度変化とも無関係に揺れていた。
+     振幅はいずれも1人用の値＝上限（酔い配慮）。 */
+  const sf = clamp(mySpeed / 17, 0, 1.15); // 1人用と同一の sf 定義
+  const bobA = Math.sin(myPhase - 0.55) * 0.05 * sf;
+  const bobB = Math.pow(Math.max(0, Math.sin(myPhase - 0.55)), 2) * 0.05 * sf;
   // 一人称: 馬の頭の少し後ろ・騎手の目線（1人用と同値）。自分の騎手は非表示、手綱は表示
   const camX = p.x - fwdX * 0.22, camZ = p.z - fwdZ * 0.22;
-  camera.position.set(camX, 2.52 + bobY, camZ);
+  camera.position.set(camX, 2.52 + bobA + bobB, camZ);
   const lookTarget = lookHeld ? (lookHeld === 'L' ? -1.05 : lookHeld === 'R' ? 1.05 : (lookYaw >= 0 ? 2.95 : -2.95)) : dragYaw;
   lookYaw += (lookTarget - lookYaw) * Math.min(1, dt * 8);
   const ly = lookYaw;
   const lx = fwdX * Math.cos(ly) + rightX * Math.sin(ly);
   const lz = fwdZ * Math.cos(ly) + rightZ * Math.sin(ly);
-  const dip = Math.abs(ly) > 2.4 ? 2.3 : 1.5 + sf * 0.12 - Math.abs(ly) * 0.55;
-  camera.lookAt(camX + lx * 22, dip, camZ + lz * 22);
-  camera.rotation.z += clamp(-latVel * 0.028, -0.05, 0.05);
+  const lookDip = Math.sin(myPhase - 0.9) * 0.12 * sf; // 視線の上下も歩様同期（1人用）
+  const dip = (Math.abs(ly) > 2.4 ? 2.3 : 1.5 - Math.abs(ly) * 0.55) + lookDip;
+  // 視線は馬の横移動の向きへ少し流れる（1人用 lookSide: 進路変更の予兆が視界に出る）
+  const steerNow = (steerR ? 1 : 0) - (steerL ? 1 : 0);
+  const lookSide = clamp(latVel * 2.4, -2.6, 2.6) + steerNow * 1.5;
+  const frontness = 1 - Math.min(1, Math.abs(ly));
+  camera.lookAt(camX + lx * 22 + rightX * lookSide * frontness, dip, camZ + lz * 22 + rightZ * lookSide * frontness);
+  // ロール: 横移動への傾き（従来どおり）＋歩様ロールとコーナーの内傾。
+  // コーナー/歩様の符号は、コースが1人用と鏡像のため反転させてある（0.8°程度の微量）
+  camera.rotation.z += clamp(-latVel * 0.028, -0.05, 0.05)
+    - Math.sin(myPhase) * 0.004 * sf
+    - (isCornerAt(myDist) ? 0.014 * sf : 0);
   const targetFov = 66 + sf * 7 + (paceKey === 'pushL' ? 2.5 : 0);
   if (Math.abs(camera.fov - targetFov) > 0.05) { camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 5); camera.updateProjectionMatrix(); }
   // 自分の騎手だけ一人称では隠す（手綱・馬は見える、1人用と同じ）
   const myMesh = horseMeshes.get(myName);
   if (myMesh && myMesh.userData.vis) myMesh.userData.vis.jock.visible = false;
-  // 太陽はプレイヤーに追随（影の範囲を常に馬群の上に保つ、1人用と同じ）
+  // 太陽はプレイヤーに追随（影の範囲を常に馬群の上に保つ）。オフセットは
+  // 1人用と同一の (+40, 190, +60): 旧 (+20, 96, +12) は真上すぎて影が短く、
+  // 光の方向感が無く平たく見えた。影カメラの far 340 に対して距離 約203 で収まる
   if (sunLight) {
-    sunLight.position.set(p.x + 20, 96, p.z + 12);
+    sunLight.position.set(p.x + 40, 190, p.z + 60);
     sunLight.target.position.set(p.x, 0, p.z);
   }
 }
