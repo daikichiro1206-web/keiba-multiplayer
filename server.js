@@ -26,7 +26,13 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 // ムチ（×1.18・1.1秒）過渡のピークで約23.8m/s。旧上限22m/sではムチの
 // ピークが1人用より削られていたため、上限を24m/sに合わせて引き上げた。
 // 送信間隔のばらつき吸収用に小さなジッター許容を加える。
-const MAX_SPEED = Number(process.env.KEIBA_MAX_SPEED) || 24; // m/s（テスト時のみ環境変数で緩和）
+/* 実速度の底上げ倍率（フェーズ18）: 全馬一律 ×1.2。基準速度・上限・
+   スタミナ消費（毎秒→距離あたり不変）・ペース熱の基準速度・横移動速度を
+   同じ倍率で揃え、相対バランス（脚質差/レーティング差/着順傾向）を保つ。
+   変更前: 巡航 約17m/s（61km/h）→ 変更後 約20.4m/s（73km/h）。
+   クライアント public/index.html の SPEED_MULT と必ず同値にすること */
+const SPEED_MULT = 1.2;
+const MAX_SPEED = Number(process.env.KEIBA_MAX_SPEED) || 24 * SPEED_MULT; // m/s（テスト時のみ環境変数で緩和）
 const POS_JITTER_M = 2.5;        // 位置検証のジッター許容(m)
 
 /* ---------------- 馬カタログ（実在の名馬50頭、catalog.js＝1人用DEFSが正） ---------------- */
@@ -616,7 +622,7 @@ function stepNpc(room, view, n, dt, now) {
   if (n.finished) {
     // ゴール後の流し: 決勝線を過ぎても止まらず、勢いのまま減速する
     const over = n.dist - L;
-    const dec = over < 40 ? 0.7 : (over < 100 ? 1.5 : 2.6);
+    const dec = (over < 40 ? 0.7 : (over < 100 ? 1.5 : 2.6)) * SPEED_MULT * SPEED_MULT; // 減速×倍率²＝流し距離を従来と同一に（フェーズ18）
     n.speed = Math.max(0, n.speed - dec * dt);
     n.dist += n.speed * dt * npcCornerFactor(room, n.dist, n.lat);
     return;
@@ -633,7 +639,7 @@ function stepNpc(room, view, n, dt, now) {
     if (dd > 1.0 && dd < 8.5 && Math.abs(o.lat - n.lat) < 1.15) { n.slip = true; break; }
   }
   const pc = NPC_PACE[n.pace];
-  let drain = pc.stam;
+  let drain = pc.stam * SPEED_MULT; // 毎秒消費×倍率＝距離あたりの消費を従来と同一に保つ（フェーズ18）
   if (drain < 0 && n.slip) drain *= (n.styleKey === 'senko' ? 0.32 : 0.45);
   if (drain < 0) {
     drain *= going.drain; // 馬場: 重いほど全馬の消費増（1人用 stepHorse と同一）
@@ -654,7 +660,7 @@ function stepNpc(room, view, n, dt, now) {
       if (fo === n || fo.finished) continue;
       const fd = fo.dist - n.dist;
       if (fd > 0.6 && fd < 7.5 && Math.abs(fo.lat - n.lat) < 1.05) {
-        const followCap = fo.speed + clampN((fd - wantGap) * 0.5, -0.7, 1.3);
+        const followCap = fo.speed + clampN((fd - wantGap) * 0.5, -0.7 * SPEED_MULT, 1.3 * SPEED_MULT);
         if (followCap < target) target = followCap;
       }
     }
@@ -670,7 +676,7 @@ function stepNpc(room, view, n, dt, now) {
       n.blocked = true;
     }
   }
-  if (n.gateT > 0) { n.gateT -= dt; target = Math.min(target, 4.2); } // ゲート出遅れ中は加速できない（1人用と同一）
+  if (n.gateT > 0) { n.gateT -= dt; target = Math.min(target, 4.2 * SPEED_MULT); } // ゲート出遅れ中は加速できない（1人用と同一。キャップは倍率連動で相対ペナルティ不変）
   const rate = target > n.speed ? 0.85 : 2.1;
   n.speed += (target - n.speed) * (1 - Math.exp(-rate * dt));
   n.dist += n.speed * dt * npcCornerFactor(room, n.dist, n.lat);
@@ -683,8 +689,8 @@ function stepNpc(room, view, n, dt, now) {
     broadcast(room, { type: 'runnerFinished', nickname: n.nickname, t: Math.round(n.finishClock * 1000) / 1000 });
   }
   // 横移動: 慣性のある「のっそり」した動き（1人用NPCと同値）
-  const wantV = clampN((n.targetLat - n.lat) * 1.4, -1.05, 1.05);
-  const dvv = wantV - n.latVel, maxDv = 1.9 * dt;
+  const wantV = clampN((n.targetLat - n.lat) * 1.4, -1.05 * SPEED_MULT, 1.05 * SPEED_MULT);
+  const dvv = wantV - n.latVel, maxDv = 1.9 * SPEED_MULT * dt;
   n.latVel += clampN(dvv, -maxDv, maxDv);
   n.lat = clampN(n.lat + n.latVel * dt, -LAT_MAX_S, LAT_MAX_S);
   if ((n.lat <= -LAT_MAX_S && n.latVel < 0) || (n.lat >= LAT_MAX_S && n.latVel > 0)) n.latVel = 0;
@@ -707,9 +713,9 @@ function separateRunners(room, view, dt) {
     if (Math.abs(dd) >= 2.9 || Math.abs(ld) >= 1.04) continue;
     const dir = ld === 0 ? (j % 2 ? 1 : -1) : Math.sign(ld);
     const fade = (1 - Math.abs(dd) / 2.9) * ((1.04 - Math.abs(ld)) / 1.04);
-    const pushV = dir * fade * 1.6 * dt, drift = dir * fade * 1.4 * dt;
-    if (!a.human) { a.latVel = clampN(a.latVel - pushV, -2.2, 2.2); a.targetLat = clampN(a.targetLat - drift, -LAT_MAX_S, LAT_MAX_S); }
-    if (!b.human) { b.latVel = clampN(b.latVel + pushV, -2.2, 2.2); b.targetLat = clampN(b.targetLat + drift, -LAT_MAX_S, LAT_MAX_S); }
+    const pushV = dir * fade * 1.6 * SPEED_MULT * dt, drift = dir * fade * 1.4 * SPEED_MULT * dt;
+    if (!a.human) { a.latVel = clampN(a.latVel - pushV, -2.2 * SPEED_MULT, 2.2 * SPEED_MULT); a.targetLat = clampN(a.targetLat - drift, -LAT_MAX_S, LAT_MAX_S); }
+    if (!b.human) { b.latVel = clampN(b.latVel + pushV, -2.2 * SPEED_MULT, 2.2 * SPEED_MULT); b.targetLat = clampN(b.targetLat + drift, -LAT_MAX_S, LAT_MAX_S); }
     if (!a.human && !b.human && Math.abs(ld) < 0.55 && room.raceClock > 3.5) {
       const avg = (a.speed + b.speed) / 2, blend = Math.min(1, dt * 2.5) * 0.5;
       a.speed += (avg - a.speed) * blend; b.speed += (avg - b.speed) * blend;
@@ -762,7 +768,7 @@ function makeNpc(room, h, lane, jockey, dayForm, startLat, styleKey) {
     style: h.style,
     // ---- 1人用エンジン移植の走行状態 ----
     num: h.num, rating: h.rating, styleKey,
-    base: h.base, heavy: h.heavy, apt: h.apt,
+    base: h.base * SPEED_MULT, heavy: h.heavy, apt: h.apt,
     dayForm,
     gateT: rollGateT(),
     lat: startLat, targetLat: startLat, latVel: 0,
@@ -834,7 +840,7 @@ function tickNpcsStep(room, dt, now) {
   for (const r of view) if (r.dist > lead.dist) lead = r;
   const L = room.raceDist || 2000;
   if (lead && lead.dist < L * 0.45) {
-    room.paceHeat += (clampN((lead.speed - 16.7) / 1.1, -1, 1) - room.paceHeat) * Math.min(1, dt * 0.6);
+    room.paceHeat += (clampN((lead.speed - 16.7 * SPEED_MULT) / (1.1 * SPEED_MULT), -1, 1) - room.paceHeat) * Math.min(1, dt * 0.6);
   }
   if (lead && lead.dist < L * 0.375 && view.some(r => r.duel)) {
     room.paceHeat += (0.55 - room.paceHeat) * Math.min(1, dt * 0.5);
