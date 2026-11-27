@@ -55,10 +55,10 @@ function connect(token) {
 const send = (c, o) => c.ws.send(JSON.stringify(o));
 
 // 検証済みストリームだけで完走させる（上限600m/sの範囲内: 12m/25ms ≒ 480m/s）
-async function driveToFinish(c) {
+async function driveToFinish(c, target = 2000) {
   let dist = 0;
-  while (dist < 2000) {
-    dist = Math.min(2000, dist + 12);
+  while (dist < target) {
+    dist = Math.min(target, dist + 12);
     send(c, { type: 'pos', dist, lane: 3, speed: 17 });
     await wait(25);
   }
@@ -114,8 +114,13 @@ async function main() {
     const bad = await fetch(BASE + '/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nickname: 'テストA' + stamp, password: 'wrong' }) });
     ok(bad.status === 401, 'ログイン: 合言葉違いを拒否');
 
-    const unlockPoor = await fetch(BASE + '/api/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: a.token, horseId: 'mcqueen' }) });
-    ok(unlockPoor.status === 400, '解放API: 所持金不足（2000Gの馬）を拒否');
+    const unlockPoor = await fetch(BASE + '/api/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: a.token, horseId: 'equinox' }) });
+    ok(unlockPoor.status === 400, '解放API: 所持金不足（5000Gの馬）を拒否');
+    const catRes = await fetch(BASE + '/api/horses');
+    const catJ = await catRes.json();
+    ok(Array.isArray(catJ) && catJ.length === 50, '名簿: 実在50頭');
+    ok(catJ.some(h => h.id === 'croix' && h.name === 'クロワデュノール'), '名簿: 推し馬クロワデュノールがいる');
+    ok(catJ.filter(h => h.price === 0).length === 4, '名簿: 初期解放は4頭（0G）');
     const unlockDup = await fetch(BASE + '/api/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: a.token, horseId: a.profile.unlocked[0] }) });
     ok(unlockDup.status === 400, '解放API: 解放済みの二重解放を拒否');
 
@@ -156,6 +161,74 @@ async function main() {
     ok(rs.standings.length === 18, 'ソロ結果: 自分＋NPC17頭の着順表');
     ok(rs.standings.filter(x => !x.npc).length === 1, 'ソロ結果: 人間は1人だけ');
     cs.ws.close();
+
+    console.log('— 追加フロー（1人用移植分） —');
+    const api = async (p, body) => {
+      const r = await fetch(BASE + p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+      return { status: r.status, j: await r.json() };
+    };
+    const ri = await api('/api/raceinfo', { token: a.token, distance: 1500 });
+    ok(ri.j.raceName === 'マイルグランプリ' && ['normal', 'g1'].includes(ri.j.grade), 'レース情報: 1500mはマイルグランプリ＋グレード抽選');
+
+    const reliefNg = await api('/api/relief', { token: a.token });
+    ok(reliefNg.status === 400, '破産救済: 残高100G以上では拒否');
+
+    const wf = await api('/api/watch/field', { token: a.token, distance: 1500 });
+    ok(Array.isArray(wf.j.field) && wf.j.field.length === 18 && new Set(wf.j.field).size === 18, '観戦: 出走表は50頭から18頭');
+    ok(wf.j.form && Object.keys(wf.j.form).length === 18, '観戦: 調子(form)が18頭分ある');
+
+    const badStake = await api('/api/bet', { token: a.token, type: 'win', picks: [wf.j.field[0]], stake: 130, field: wf.j.field, grade: wf.j.grade });
+    ok(badStake.status === 400, '賭け: 50G刻みでない賭け金を拒否');
+    const badPicks = await api('/api/bet', { token: a.token, type: 'win', picks: [wf.j.field[0], wf.j.field[1]], stake: 100, field: wf.j.field, grade: wf.j.grade });
+    ok(badPicks.status === 400, '賭け: 券種と頭数が合わない買い目を拒否');
+    const balBefore = (await api('/api/auth', { token: a.token })).j.profile.balance;
+    const bet = await api('/api/bet', { token: a.token, type: 'win', picks: [wf.j.field[0]], stake: 100, field: wf.j.field, grade: wf.j.grade });
+    ok(bet.status === 200 && bet.j.balance === balBefore - 100, '賭け: 単勝100Gを購入できる');
+
+    const mis = await api('/api/missions', { token: a.token });
+    ok(Array.isArray(mis.j.missions) && mis.j.missions.length === 6, 'ミッション: 6件返る');
+    const claimNg = await api('/api/missions/claim', { token: a.token, id: 'first_win' });
+    ok(claimNg.status === 400, 'ミッション: 未達成の請求を拒否');
+
+    const cw = await connect(a.token);
+    await cw.waitFor('welcome');
+    send(cw, { type: 'watchStart' });
+    const wcd = await cw.waitFor('countdown', 15000);
+    ok(wcd.meta && wcd.meta.mode === 'watch' && wcd.meta.distance === 1500 && !!wcd.meta.going, '観戦: カウントダウン＋観戦メタ（距離・馬場）');
+    ok(wcd.field.length === 18 && wcd.field.every(f => f.npc), '観戦: 出走表18頭は全てNPC');
+    await cw.waitFor('raceStart', 15000);
+    send(cw, { type: 'skip' }); // 1500m: 残り1000mまで早回し
+    const wres = await cw.waitFor('results', 180000);
+    ok(wres.standings.length === 18, '観戦: 結果に着順表18頭');
+    ok(!!wres.betResult && typeof wres.betResult.won === 'boolean' && wres.betResult.payout >= 0, '観戦: 賭けが精算される');
+    const profAfter = await api('/api/auth', { token: a.token });
+    ok(profAfter.j.profile.balance === wres.betResult.balance, '観戦: 精算後の残高がサーバーと一致');
+    cw.ws.close();
+
+    const rk = await api('/api/ranking', { token: a.token });
+    ok(rk.j.standings && rk.j.standings.length >= 19 && rk.j.standings.some(r => r.name === a.profile.nickname), 'ランキング: AI騎手18人＋自分（＋記録済みの勝者騎手）');
+    const stt = await api('/api/stats', { token: a.token });
+    ok(stt.j.betting && stt.j.betting.count >= 1 && stt.j.jockey && typeof stt.j.jockey.starts === 'number', '記録: 賭け・騎手の集計が返る');
+
+    const r2 = await auth('救済テスト' + stamp, 'pass-r');
+    const wf2 = await api('/api/watch/field', { token: r2.token, distance: 2000 });
+    const bet2 = await api('/api/bet', { token: r2.token, type: 'trifecta', picks: wf2.j.field.slice(0, 3), stake: 950, field: wf2.j.field, grade: wf2.j.grade });
+    ok(bet2.status === 200 && bet2.j.balance === 50, '救済準備: 950G賭けて残高50G');
+    const reliefOk = await api('/api/relief', { token: r2.token });
+    ok(reliefOk.status === 200 && reliefOk.j.balance === 550, '破産救済: 残高100G未満で500G付与');
+    const reliefDup = await api('/api/relief', { token: r2.token });
+    ok(reliefDup.status === 400, '破産救済: 付与後は再請求不可');
+
+    const c1k = await connect(s.token);
+    await c1k.waitFor('welcome');
+    send(c1k, { type: 'soloStart', horseId: s.profile.unlocked[0], distance: 1000 });
+    const cd1k = await c1k.waitFor('countdown', 15000);
+    ok(cd1k.meta && cd1k.meta.distance === 1000 && !!cd1k.meta.going, '1000m: カウントダウンのメタに距離と馬場');
+    await c1k.waitFor('raceStart', 15000);
+    await driveToFinish(c1k, 1000);
+    const res1k = await c1k.waitFor('results', 90000);
+    ok(res1k.standings.length === 18 && res1k.meta && res1k.meta.distance === 1000, '1000m: 結果が返る');
+    c1k.ws.close();
 
     console.log(failures === 0 ? '\n🎉 ALL PASS' : `\n💥 ${failures} FAILURES`);
     process.exitCode = failures === 0 ? 0 : 1;
