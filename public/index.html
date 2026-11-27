@@ -2475,7 +2475,7 @@ function startReplay() {
   $('camBar').style.display = 'none'; $('controls').style.display = 'none'; $('lookBar').style.display = 'none';
   $('skipBtn').style.display = 'none'; $('watchExit').style.display = 'none';
   $('replayBar').style.display = 'flex';
-  horseMeshes.forEach(m => { if (m.userData.vis) m.userData.vis.jock.visible = true; setHorseAnim(m, 'Gallop'); });
+  horseMeshes.forEach(m => { if (m.userData.vis) m.userData.vis.jock.visible = true; m.userData.replayDist = null; setHorseAnim(m, 'Gallop'); });
   replayLast = performance.now();
   requestAnimationFrame(replayLoop);
 }
@@ -2504,7 +2504,14 @@ function replayLoop(now) {
     mesh.position.set(p.x, 0, p.z);
     mesh.rotation.y = Math.atan2(p.dx, p.dz);
     const anim = mesh.userData.anim;
-    if (anim) anim.mixer.update(dt * replaySpeed * 1.4);
+    if (anim) {
+      // リプレイも距離駆動（本レースと同じ歩幅カーブで脚を進める）
+      const prevD = mesh.userData.replayDist == null ? fr.d[i] : mesh.userData.replayDist;
+      const rdd = Math.max(0, fr.d[i] - prevD);
+      mesh.userData.replayDist = fr.d[i];
+      const estSpd = dt * replaySpeed > 0 ? rdd / (dt * replaySpeed) : 0;
+      anim.mixer.update(Math.min(rdd, strideLenOf(estSpd) * 2) / strideLenOf(estSpd) * 0.5);
+    }
   });
   // 放送カメラで先頭を追う
   let li = 0; fr.d.forEach((v, i) => { if (v > fr.d[li]) li = i; });
@@ -2641,10 +2648,11 @@ function raceLoop(now) {
       if (pickNick) flashCheck(pickNick[0], pickNick[1].horseName);
     }
   } else {
+    const prevMyDist = myDist;
     stepPhysics(dt, now);
-    // 歩様位相を1人用 stepHorse と同じく距離で進める（strideLen は速度連動）
-    const sfPhase = clamp(mySpeed / 17, 0, 1.15);
-    if (mySpeed > 0.3) myPhase += dt * mySpeed / (2.6 + sfPhase * 2.6) * Math.PI * 2;
+    // 歩様位相は実際に進んだ距離で進める（脚アニメ・騎手の上下動と歩幅を統一。
+    // strideLenOf は updateMeshes の脚アニメと同じ歩幅カーブ）
+    if (mySpeed > 0.3) myPhase += Math.max(0, myDist - prevMyDist) / strideLenOf(mySpeed) * Math.PI * 2;
     else myPhase += dt * 0.7;
     checkInterference(dt);
     // サーバーへ位置送信（約20Hz。速度上限チェックに引っかからない通常送信間隔）
@@ -2724,6 +2732,11 @@ function updateVisOffsets(dt) {
     }
   });
 }
+/* 歩幅カーブ（脚アニメ・歩様位相で共用）。Gallopクリップ実測: 脚の振りを
+   1.3倍に広げた加工後で「滑らない歩幅」5.40m（素は4.37m）。このカーブだと
+   接地蹄の滑りは全速度域で ±2.3m/s 以内（旧時計駆動式は17m/sで +6.8m/s、
+   フレーム落ち・スローモーション時は +10m/s 級まで悪化していた）。 */
+function strideLenOf(spd) { return 3.6 + clamp(spd / 17, 0, 1.15) * 2.2; }
 function updateMeshes(dt) {
   runners.forEach((r, nick) => {
     const mesh = horseMeshes.get(nick); if (!mesh) return;
@@ -2734,20 +2747,27 @@ function updateMeshes(dt) {
     mesh.position.set(p.x, 0, p.z);
     mesh.rotation.y = Math.atan2(p.dx, p.dz);
     const spd = isMe ? mySpeed : r.animSpeed;
-    // 歩様位相（1人用 stepHorse と同じく距離で進める）と速度係数
     const sfH = clamp(spd / 17, 0, 1.15);
+    // このフレームで実際に進んだ距離（脚・位相はすべてこれで駆動する）
+    const dd = Math.max(0, d - (mesh.userData.animDist == null ? d : mesh.userData.animDist));
+    mesh.userData.animDist = d;
     if (!isMe) {
-      if (spd > 0.3) r.phase += dt * spd / (2.6 + sfH * 2.6) * Math.PI * 2;
+      if (spd > 0.3) r.phase += dd / strideLenOf(spd) * Math.PI * 2;
       else r.phase += dt * 0.7;
     }
     const anim = mesh.userData.anim;
     if (anim) {
       if (racing && spd > 0.5) setHorseAnim(mesh, 'Gallop');
-      // ギャロップ再生速度は1人用 stepHorse の式そのまま（0.12 + sf*1.05）。
-      // Gallopクリップは0.5秒=1歩周期なので、全速で約2.3歩/秒＝実馬の歩様
-      // ケイデンスに合う。旧式（0.55 + 速度*0.055）は特に低〜中速で脚だけが
-      // 速く回り、地面とズレて「滑って」見えた
-      anim.mixer.update(dt * (0.12 + sfH * 1.05));
+      else if (racing && spd <= 0.5 && d > RACE_DIST) setHorseAnim(mesh, 'Idle'); // ゴール後の流しで止まったら立ち姿へ
+      if (anim.current === 'Gallop' && racing) {
+        // 距離駆動: 進んだ距離ぶんだけ歩様を進めるので、脚の周期と対地速度が
+        // 常に一致する。旧・時計駆動（dt×(0.12+sf*1.05)）は、フレーム落ち時の
+        // dtクランプ（0.05秒）やゴール前のスローモーション（dt×0.68）で
+        // 他馬の脚だけが遅れ、「歩いているのに高速移動」して見えた
+        anim.mixer.update(Math.min(dd, strideLenOf(spd) * 2) / strideLenOf(spd) * 0.5); // 0.5 = Gallopクリップの周期(秒)
+      } else {
+        anim.mixer.update(dt); // Idle は等速（呼吸・耳・尾の動きを止めない）
+      }
     }
     if (mesh.userData.fallback) {
       mesh.children.forEach(c => { if (c.name === 'leg') c.rotation.x = Math.sin(raceClock * 10 + r.phase) * 0.5; });
