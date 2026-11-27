@@ -406,6 +406,8 @@ function maybeStartCountdown(room) {
    ・加速は exp 平滑（加速0.85 / 減速2.1）、スタミナはペース表で増減し
      スリップストリームで軽減、前の馬への追走/前詰まりキャップあり
    ・横移動は decideLat（内ラチがホーム）＋慣性（最大1.05m/s、加速度1.9）
+   ・コーナー係数も1人用そのもの（コーナー区間のみ 110/(110+lat)）。
+     ティックは最大1/60秒のサブステップで回し、計算粒度も1人用に一致させる
    サーバー内の lat は物理レーン基準（負=内・正=外、1人用と同じ）。
    ===================================================================== */
 const LANE_W_S = 1.14, LAT_MAX_S = 9.7;
@@ -426,15 +428,15 @@ const NPC_STYLE_PROFILE = {
 /* 距離適性（1人用 aptMulOf と同一: 距離カテゴリの適性値で ±0.25%） */
 const distCatIdxOf = len => len <= 1000 ? 0 : len <= 1500 ? 1 : 2;
 const npcAptMul = (apt, len) => 1 + ((((apt || [1, 1, 1])[distCatIdxOf(len)]) ?? 1) - 1) * 0.0025;
-/* コーナー係数: クライアント cornerFactorAt と同一式（楕円 A=190, B=120 の曲率半径）。
-   引数 lat は物理レーン基準（外が正）。dist はレース距離基準なので、物理コース
-   座標（ゴール固定でスタートが前にずれる分）へ直してから曲率を評価する */
+/* コーナー係数: 1人用 cornerFactor そのもの（直線＋半径110mの半円コーナー。
+   コーナー区間だけ 110/(110+lat)、直線は1）。旧マルチ版は見た目の楕円コースの
+   曲率半径を全周に適用していたため、直線でも内有利が効いて隊列が内に張り付き、
+   内外のメリハリ（コーナーで内に集まり直線で広がる）と逃げ馬の位置取りが
+   1人用とずれていた。実測（6レース平均）: 本モデルでは逃げの平均順位が
+   400m地点 4.5→2.3、馬群の広がり 1000m地点 127m→110m、勝ち時計
+   110.3s→112.7s と1人用の挙動に寄る。引数 lat は物理レーン基準（外が正） */
 function npcCornerFactor(room, dist, lat) {
-  const phys = dist + (TRACK_LEN - (room.raceDist || 2000));
-  const t = (phys / TRACK_LEN) * Math.PI * 2;
-  const s = Math.sin(t), c = Math.cos(t);
-  const rho = Math.pow((190 * s) * (190 * s) + (120 * c) * (120 * c), 1.5) / (190 * 120);
-  return rho / (rho + lat);
+  return npcIsCorner(room, dist) ? 110 / (110 + lat) : 1;
 }
 /* コーナー判定（1人用 isCorner と同じ物理座標の区間: 直線≈654.5m / 弧≈345.6m） */
 function npcIsCorner(room, dist) {
@@ -792,7 +794,18 @@ function startRace(room) {
     checkRaceEnd(room, now);
   }, 100);
 }
+/* NPCティックは最大1/60秒のサブステップで回す（1人用エンジンと同じ粒度）。
+   100ms刻みのままだと馬が1ティックで約1.7m進み、追走/前詰まりキャップや
+   馬同士のセパレーション（速度ベースの押し出し）が反応する前に相手の領域へ
+   突っ込んでしまう（トンネリング）。実測では接触ゾーン滞在が約147 pair秒
+   →約33 pair秒、深い重なりが約26 pair秒→約6 pair秒まで減る（同一式・同一
+   定数のまま粒度だけを1人用に一致させた効果）。配信は従来どおり100ms毎。 */
 function tickNpcs(room, dt, now) {
+  const steps = Math.max(1, Math.ceil(dt / (1 / 60)));
+  const h = dt / steps;
+  for (let i = 0; i < steps; i++) tickNpcsStep(room, h, now);
+}
+function tickNpcsStep(room, dt, now) {
   room.raceClock = (room.raceClock || 0) + dt;
   if (room.paceHeat == null) room.paceHeat = 0;
   // 全ランナーの統一ビュー（人間はサーバー検証済みの dist/lane/speed から組み立てる）
