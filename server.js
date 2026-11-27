@@ -12,43 +12,28 @@ const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const { createStore } = require('./store');
+const CAT = require('./catalog');
 
 const PORT = process.env.PORT || 3000;
-const TRACK_LEN = 2000;          // 2000m
-const FIELD_SIZE = 18;           // 18頭立て
+const TRACK_LEN = 2000;          // 物理コース1周（ゴール固定。レース距離はこれ以下で、スタートが前にずれる）
+const FIELD_SIZE = CAT.FIELD_SIZE; // 18頭立て（名簿50頭から抽選）
 const MAX_HUMANS = 8;            // 1部屋の最大人数（残りはNPC）
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data'); // 保存先は環境変数で変更可（デプロイ先の永続ディスク向け）
 const DATA_FILE = path.join(DATA_DIR, 'players.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 // サーバー権威化: クライアントの距離申告は「ありえる速度」の範囲でのみ受理する
-// クライアントの最高ペースは18.2m/s。余裕を持たせて22m/sを上限とし、
+// 1人用エンジンの実効最高速度は、持続で約21.4m/s（攻め・大×末脚キック）、
+// ムチ（×1.18・1.1秒）過渡のピークで約23.8m/s。旧上限22m/sではムチの
+// ピークが1人用より削られていたため、上限を24m/sに合わせて引き上げた。
 // 送信間隔のばらつき吸収用に小さなジッター許容を加える。
-const MAX_SPEED = Number(process.env.KEIBA_MAX_SPEED) || 22; // m/s（テスト時のみ環境変数で緩和）
+const MAX_SPEED = Number(process.env.KEIBA_MAX_SPEED) || 24; // m/s（テスト時のみ環境変数で緩和）
 const POS_JITTER_M = 2.5;        // 位置検証のジッター許容(m)
 
-/* ---------------- 馬カタログ（実在の名馬・抜粋） ---------------- */
-const HORSES = [
-  { id: 'deep',     name: 'ディープインパクト',   style: '追込', rating: 95, price: 0,    apt: '中距離', era: '2000年代' },
-  { id: 'orfevre',  name: 'オルフェーヴル',       style: '差し', rating: 94, price: 0,    apt: '中距離', era: '2010年代' },
-  { id: 'kitasan',  name: 'キタサンブラック',     style: '先行', rating: 94, price: 0,    apt: '中距離', era: '2010年代' },
-  { id: 'almond',   name: 'アーモンドアイ',       style: '先行', rating: 95, price: 0,    apt: '中距離', era: '2010年代' },
-  { id: 'equinox',  name: 'イクイノックス',       style: '先行', rating: 96, price: 5000, apt: '中距離', era: '2020年代' },
-  { id: 'contrail', name: 'コントレイル',         style: '差し', rating: 94, price: 4000, apt: '中距離', era: '2020年代' },
-  { id: 'liberty',  name: 'リバティアイランド',   style: '先行', rating: 93, price: 4000, apt: '中距離', era: '2020年代' },
-  { id: 'croix',    name: 'クロワデュノール',     style: '先行', rating: 93, price: 4000, apt: '中距離', era: '2020年代' },
-  { id: 'goldship', name: 'ゴールドシップ',       style: '差し', rating: 92, price: 3000, apt: '中距離', era: '2010年代' },
-  { id: 'oguri',    name: 'オグリキャップ',       style: '差し', rating: 93, price: 3000, apt: 'マイル', era: '〜90年代' },
-  { id: 'suzuka',   name: 'サイレンススズカ',     style: '逃げ', rating: 93, price: 3000, apt: 'マイル', era: '〜90年代' },
-  { id: 'vodka',    name: 'ウオッカ',             style: '差し', rating: 92, price: 2500, apt: 'マイル', era: '2000年代' },
-  { id: 'gentil',   name: 'ジェンティルドンナ',   style: '先行', rating: 93, price: 2500, apt: '中距離', era: '2010年代' },
-  { id: 'rudolf',   name: 'シンボリルドルフ',     style: '先行', rating: 94, price: 3000, apt: '中距離', era: '〜90年代' },
-  { id: 'teio',     name: 'トウカイテイオー',     style: '先行', rating: 92, price: 2500, apt: '中距離', era: '〜90年代' },
-  { id: 'mcqueen',  name: 'メジロマックイーン',   style: '先行', rating: 91, price: 2000, apt: '長距離', era: '〜90年代' },
-  { id: 'sodashi',  name: 'ソダシ',               style: '先行', rating: 90, price: 2000, apt: 'マイル', era: '2020年代' },
-  { id: 'do-deuce', name: 'ドウデュース',         style: '差し', rating: 93, price: 3000, apt: '中距離', era: '2020年代' },
-];
-const horseById = id => HORSES.find(h => h.id === id);
-const DEFAULT_UNLOCKED = HORSES.filter(h => h.price === 0).map(h => h.id);
+/* ---------------- 馬カタログ（実在の名馬50頭、catalog.js＝1人用DEFSが正） ---------------- */
+const HORSES = CAT.HORSES;
+const horseById = CAT.horseById;
+const horseByName = CAT.horseByName;
+const DEFAULT_UNLOCKED = CAT.STARTER_IDS;
 
 /* ---------------- プレイヤーデータ保存 ----------------
  * 保存先は store.js のアダプタが決める:
@@ -78,6 +63,63 @@ function publicProfile(nickname) {
   const p = players[nickname];
   return { nickname, balance: p.balance, unlocked: p.unlocked, wins: p.wins, races: p.races };
 }
+/* プレイヤー記録の拡張フィールド（ミッション進捗カウンタ・受取済み・賭け履歴・
+   騎手ランキングのシーズン状態・次のレースのグレード・観戦セッション）。
+   旧データにも欠けていれば既定値を補う（1人用 actions.ts の各テーブル相当）。 */
+function normalizePlayer(p) {
+  if (!p.counters) p.counters = {};                       // counter:<key> 相当
+  if (!p.claimedMissions) p.claimedMissions = {};          // mission:<id> の claimed 相当
+  if (!Array.isArray(p.bets)) p.bets = [];                 // 賭け履歴（精算・収支集計用）
+  if (!p.nextBetId) p.nextBetId = 1;
+  if (!p.season) p.season = { n: 1, races: 0, wins: {}, prevWins: null, prevSeason: 0 };
+  if (p.pendingGrade === undefined) p.pendingGrade = null;
+  if (p.watchSession === undefined) p.watchSession = null;
+  return p;
+}
+function bumpCounter(p, key, by = 1) { p.counters[key] = (p.counters[key] || 0) + by; }
+function counterValue(p, key) { return p.counters[key] || 0; }
+function paidUnlockCount(p) {
+  return Math.max(0, p.unlocked.filter(id => !CAT.STARTER_IDS.includes(id)).length);
+}
+function missionProgress(p, def) {
+  return def.counter === 'unlocks' ? paidUnlockCount(p) : counterValue(p, def.counter);
+}
+function missionsView(p) {
+  return CAT.MISSIONS.map(m => {
+    const progress = missionProgress(p, m);
+    return {
+      id: m.id, title: m.title, desc: m.desc, target: m.target, reward: m.reward,
+      progress: Math.min(progress, m.target), achieved: progress >= m.target,
+      claimed: p.claimedMissions[m.id] === 1,
+    };
+  });
+}
+/* 1レース分の結果を本人の騎手ランキングへ記録（1人用 recordRaceResult と同一:
+   勝ち馬の騎手に1勝、シーズン消化数を進め、30レースで次シーズンへ） */
+function recordRaceResultFor(p, winnerJockey) {
+  if (!winnerJockey) return;
+  const s = p.season;
+  s.wins[winnerJockey] = (s.wins[winnerJockey] || 0) + 1;
+  s.races += 1;
+  if (s.races >= CAT.SEASON_RACES) {
+    s.prevWins = s.wins; s.prevSeason = s.n;
+    s.n += 1; s.races = 0; s.wins = {};
+  }
+}
+function rankingView(p, nickname) {
+  const s = p.season;
+  const names = new Set([nickname, ...CAT.AI_JOCKEYS, ...Object.keys(s.wins)]);
+  const standings = [...names]
+    .map(name => ({ name, wins: s.wins[name] || 0, isPlayer: name === nickname }))
+    .sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name, 'ja'));
+  let prevChampion = null;
+  if (s.prevWins) {
+    const top = Object.entries(s.prevWins).map(([name, wins]) => ({ name, wins }))
+      .sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name, 'ja'))[0];
+    if (top && top.wins > 0) prevChampion = { season: s.prevSeason, name: top.name, wins: top.wins, isPlayer: top.name === nickname };
+  }
+  return { season: s.n, racesInSeason: s.races, seasonRaces: CAT.SEASON_RACES, standings, prevChampion };
+}
 function authPlayer(nickname, password) {
   nickname = String(nickname || '').trim().slice(0, 16);
   password = String(password || '');
@@ -85,10 +127,10 @@ function authPlayer(nickname, password) {
   let p = players[nickname];
   if (!p) {  // 新規登録
     const salt = crypto.randomBytes(8).toString('hex');
-    p = players[nickname] = {
+    p = players[nickname] = normalizePlayer({
       salt, passHash: hashPassword(password, salt),
-      balance: 1000, unlocked: [...DEFAULT_UNLOCKED], wins: 0, races: 0,
-    };
+      balance: CAT.INITIAL_BALANCE, unlocked: [...DEFAULT_UNLOCKED], wins: 0, races: 0,
+    });
     persistPlayer(nickname);
   } else if (p.passHash !== hashPassword(password, p.salt)) {
     return { error: '合言葉が違います' };
@@ -133,7 +175,15 @@ const server = http.createServer((req, res) => {
     req.on('data', c => body += c);
     req.on('end', () => {
       try {
-        const { nickname, password } = JSON.parse(body || '{}');
+        const parsed = JSON.parse(body || '{}');
+        // トークン再ログイン（クライアントの自動ログイン用。セッションが生きている間だけ有効）
+        if (parsed.token && sessions.has(parsed.token)) {
+          const nickname = sessions.get(parsed.token);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ token: parsed.token, profile: publicProfile(nickname), horses: HORSES }));
+          return;
+        }
+        const { nickname, password } = parsed;
         const r = authPlayer(nickname, password);
         res.writeHead(r.error ? 401 : 200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(r.error ? { error: r.error } : { token: r.token, profile: r.profile, horses: HORSES }));
@@ -146,6 +196,119 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(HORSES));
     return;
   }
+  /* ---- ゲーム経済API（1人用 actions.ts の移植。金額はすべてサーバー側で決める） ---- */
+  const apiPost = (url, fn) => {
+    if (req.method !== 'POST' || req.url !== url) return false;
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+      try {
+        const args = JSON.parse(body || '{}');
+        const nickname = sessions.get(args.token);
+        if (!nickname || !players[nickname]) { json(401, { error: 'ログインが必要です' }); return; }
+        fn({ nickname, p: normalizePlayer(players[nickname]), args, json });
+      } catch (e) { json(400, { error: e.message || '不正なリクエストです' }); }
+    });
+    return true;
+  };
+  // 次のレース情報: グレードを抽選して本人に保持し、レース名と一緒に返す（1人用 rollGrade 25%）
+  if (apiPost('/api/raceinfo', ({ nickname, p, args, json }) => {
+    const distance = CAT.DISTANCES.includes(args.distance) ? args.distance : 2000;
+    p.pendingGrade = CAT.rollGrade();
+    persistPlayer(nickname);
+    json(200, { grade: p.pendingGrade, raceName: CAT.RACE_INFO[distance].name, category: CAT.RACE_INFO[distance].category, distance });
+  })) return;
+  // 観戦レースの出走抽選: 名簿50頭から18頭＋当日の調子（新聞の印と連動する form）をサーバーが決める
+  if (apiPost('/api/watch/field', ({ nickname, p, args, json }) => {
+    const distance = CAT.DISTANCES.includes(args.distance) ? args.distance : 2000;
+    const names = HORSES.map(h => h.name);
+    for (let i = names.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [names[i], names[j]] = [names[j], names[i]]; }
+    const field = names.slice(0, FIELD_SIZE);
+    const form = {};
+    for (const n of field) form[n] = 1 + (Math.random() * 2 - 1) * 0.0035; // 1人用 rollRaceCard と同じ ±0.35%
+    const grade = p.pendingGrade || CAT.rollGrade();
+    p.pendingGrade = null;
+    p.watchSession = { field, form, grade, distance, betId: null };
+    persistPlayer(nickname);
+    json(200, { field, form, grade, distance, raceName: CAT.RACE_INFO[distance].name, category: CAT.RACE_INFO[distance].category });
+  })) return;
+  // 賭け券購入（1人用 placeBet と同一検証: オッズはサーバー計算、賭け金は100G以上・50G単位、MAXのみ例外）
+  if (apiPost('/api/bet', ({ nickname, p, args, json }) => {
+    const odds = CAT.oddsForBet(args.type, Array.isArray(args.picks) ? args.picks : [], Array.isArray(args.field) ? args.field : []);
+    if (odds === null) { json(400, { error: '賭けの組み合わせが正しくありません' }); return; }
+    const stake = Number(args.stake);
+    if (!Number.isInteger(stake) || stake < 1 || stake > p.balance) { json(400, { error: '所持金が足りません' }); return; }
+    if (stake !== p.balance && (stake < 100 || stake % 50 !== 0)) { json(400, { error: '賭け金は100G以上・50G単位で選んでください（全額賭ける時はMAX）' }); return; }
+    const grade = args.grade === 'g1' ? 'g1' : 'normal';
+    const bet = { id: p.nextBetId++, type: args.type, picks: [...args.picks], stake, odds, grade, settled: 0, payout: 0, refunded: 0 };
+    p.bets.push(bet);
+    p.balance -= stake;
+    if (p.watchSession) p.watchSession.betId = bet.id;
+    persistPlayer(nickname);
+    json(200, { betId: bet.id, odds, balance: p.balance });
+  })) return;
+  // 賭け券の返金（観戦をやめた場合。精算済みは対象外）
+  if (apiPost('/api/bet/refund', ({ nickname, p, args, json }) => {
+    const bet = p.bets.find(b => b.id === args.betId);
+    if (!bet) { json(400, { error: '賭け券が見つかりません' }); return; }
+    if (bet.settled === 1) { json(200, { refunded: 0, balance: p.balance }); return; }
+    bet.settled = 1; bet.payout = bet.stake; bet.refunded = 1;
+    p.balance += bet.stake;
+    if (p.watchSession && p.watchSession.betId === bet.id) p.watchSession.betId = null;
+    persistPlayer(nickname);
+    json(200, { refunded: bet.stake, balance: p.balance });
+  })) return;
+  // 破産救済（残高100G未満の時だけ500G。サーバー側で判定するので連打では増えない）
+  if (apiPost('/api/relief', ({ nickname, p, json }) => {
+    if (p.balance >= CAT.RELIEF_THRESHOLD) { json(400, { error: `救済金は所持金が${CAT.RELIEF_THRESHOLD}G未満の時だけ受け取れます` }); return; }
+    p.balance += CAT.RELIEF_AMOUNT;
+    persistPlayer(nickname);
+    json(200, { amount: CAT.RELIEF_AMOUNT, balance: p.balance });
+  })) return;
+  if (apiPost('/api/missions', ({ p, json }) => json(200, { missions: missionsView(p) }))) return;
+  if (apiPost('/api/missions/claim', ({ nickname, p, args, json }) => {
+    const def = CAT.MISSIONS.find(m => m.id === args.id);
+    if (!def) { json(400, { error: 'そのミッションは存在しません' }); return; }
+    if (missionProgress(p, def) < def.target) { json(400, { error: 'まだ達成していません' }); return; }
+    if (p.claimedMissions[def.id] === 1) { json(400, { error: 'この報酬はもう受け取り済みです' }); return; }
+    p.claimedMissions[def.id] = 1;
+    p.balance += def.reward;
+    persistPlayer(nickname);
+    json(200, { reward: def.reward, balance: p.balance });
+  })) return;
+  if (apiPost('/api/ranking', ({ nickname, p, json }) => json(200, rankingView(p, nickname)))) return;
+  // 記録・収支（1人用 getStats と同一集計: 精算済み・返金分を除く賭け履歴から）
+  if (apiPost('/api/stats', ({ nickname, p, json }) => {
+    const settled = p.bets.filter(b => b.settled === 1 && b.refunded === 0 && !(b.payout > 0 && b.payout === b.stake));
+    const totalStake = settled.reduce((s, b) => s + b.stake, 0);
+    const totalPayout = settled.reduce((s, b) => s + b.payout, 0);
+    const hitCount = settled.filter(b => b.payout > 0).length;
+    const byType = ['win', 'place', 'wide', 'quinella', 'trio', 'trifecta'].map(t => {
+      const rows = settled.filter(b => b.type === t);
+      return { type: t, count: rows.length, hits: rows.filter(b => b.payout > 0).length };
+    });
+    const starts = counterValue(p, 'jockey_starts');
+    const wins = counterValue(p, 'jockey_wins');
+    const prizeTotal = counterValue(p, 'jockey_prize_total');
+    const standings = rankingView(p, nickname).standings;
+    json(200, {
+      balance: p.balance,
+      betting: {
+        count: settled.length, totalStake, totalPayout, profit: totalPayout - totalStake,
+        hitCount, hitRate: settled.length > 0 ? Math.round(hitCount / settled.length * 1000) / 10 : null,
+        bestPayout: settled.reduce((m, b) => Math.max(m, b.payout), 0), byType,
+      },
+      jockey: {
+        starts, wins, prizeTotal,
+        winRate: starts > 0 && wins <= starts ? Math.round(wins / starts * 1000) / 10 : null,
+        seasonWins: p.season.wins[nickname] || 0,
+        seasonRank: standings.findIndex(s => s.name === nickname) + 1,
+      },
+      unlockedCount: p.unlocked.length, totalHorses: HORSES.length,
+      season: p.season.n,
+    });
+  })) return;
   const file = path.join(PUBLIC_DIR, req.url === '/' ? 'index.html' : req.url.split('?')[0]);
   if (!file.startsWith(PUBLIC_DIR) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     res.writeHead(404); res.end('not found'); return;
@@ -165,11 +328,23 @@ function makeCode() {
 }
 function roomSummary(room) {
   return {
-    code: room.code, state: room.state,
+    code: room.code, state: room.state, mode: room.mode || 'jockey',
+    distance: room.raceDist || 2000,
+    raceName: CAT.RACE_INFO[room.raceDist || 2000].name,
     players: [...room.members.values()].map(m => ({
       nickname: m.nickname, horseId: m.horseId, horseName: horseById(m.horseId)?.name || '',
       ready: m.ready, connected: !!m.ws,
     })),
+  };
+}
+/* レースの開催情報（距離・グレード・馬場）。カウントダウン/開始/結果に同梱する */
+function raceMeta(room) {
+  const distance = room.raceDist || 2000;
+  return {
+    mode: room.mode || 'jockey', distance,
+    raceName: CAT.RACE_INFO[distance].name, category: CAT.RACE_INFO[distance].category,
+    grade: room.grade || 'normal',
+    going: room.going ? { id: room.going.id, name: room.going.name, note: room.going.note } : { id: 'ryo', name: '良馬場', note: '' },
   };
 }
 function broadcast(room, obj, exceptWs = null) {
@@ -180,11 +355,19 @@ function broadcast(room, obj, exceptWs = null) {
 }
 function send(ws, obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 
+/* 次のレースのグレード: ホーム表示用に抽選済みのものがあればそれを使い、無ければここで抽選 */
+function consumeGrade(nickname) {
+  const p = players[nickname];
+  if (p && p.pendingGrade) { const g = p.pendingGrade; p.pendingGrade = null; return g; }
+  return CAT.rollGrade();
+}
 function createRoom(hostNickname) {
   const code = makeCode();
   const room = {
     code, state: 'lobby', members: new Map(), // nickname -> member
     npcs: [], results: null, tickTimer: null, finishTimer: null, raceStartAt: 0,
+    mode: 'jockey', raceDist: 2000, grade: 'normal', going: CAT.GOING_LIST[0],
+    owner: null, betId: null, watchSession: null, firstFinishAt: null, paceHeat: 0, raceClock: 0,
   };
   rooms.set(code, room);
   return room;
@@ -193,7 +376,8 @@ function addMember(room, nickname, ws) {
   let m = room.members.get(nickname);
   if (!m) {
     m = { nickname, ws, horseId: players[nickname].unlocked[0], ready: false,
-          dist: 0, lane: room.members.size, speed: 0, finished: false, finishAt: null, place: null, lastPosAt: 0 };
+          dist: 0, lane: room.members.size, speed: 0, finished: false, finishAt: null, place: null, lastPosAt: 0,
+          fouls: 0, finishClock: null, dayForm: 1 };
     room.members.set(nickname, m);
   } else {
     m.ws = ws; // 再接続
@@ -208,41 +392,370 @@ function maybeStartCountdown(room) {
   buildField(room);
   const startAt = Date.now() + 3000;
   room.raceStartAt = startAt;
-  broadcast(room, { type: 'countdown', startAt, field: fieldList(room) });
+  broadcast(room, { type: 'countdown', startAt, field: fieldList(room), meta: raceMeta(room) });
   setTimeout(() => startRace(room), 3000);
 }
+/* =====================================================================
+   NPC走行シミュレーション — 1人用 keiba-engine.js の stepHorse / aiPace /
+   decideLat をサーバーへ移植したもの。数値はすべて1人用と同一:
+   ・base速度は1人用 DEFS の実値（16.74〜17.00m/s）を rating から再現する式
+     base = 14.226 + 0.0289 × rating（クライアントのプレイヤー計算と同一式）
+   ・目標速度 = base × レーティング係数 × dayForm × 距離適性 × ペース倍率
+     × 脚質3相補正 × スタミナ低下曲線 × 微振動（1人用の target 式そのまま。
+     馬場補正はマルチ版に馬場概念がないため良馬場=1.0固定）
+   ・加速は exp 平滑（加速0.85 / 減速2.1）、スタミナはペース表で増減し
+     スリップストリームで軽減、前の馬への追走/前詰まりキャップあり
+   ・横移動は decideLat（内ラチがホーム）＋慣性（最大1.05m/s、加速度1.9）
+   サーバー内の lat は物理レーン基準（負=内・正=外、1人用と同じ）。
+   ===================================================================== */
+const LANE_W_S = 1.14, LAT_MAX_S = 9.7;
+const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
+const NPC_STYLE_KEY = { '逃げ': 'nige', '先行': 'senko', '差し': 'sashi', '追込': 'oikomi' };
+const NPC_PACE = {
+  hold:  { mul: 0.85,  stam: 2.0 },
+  nari:  { mul: 0.965, stam: -0.12 },
+  pushS: { mul: 1.075, stam: -1.3 },
+  pushL: { mul: 1.19,  stam: -3.0 },
+};
+const NPC_STYLE_PROFILE = {
+  nige:   { early: 1.030, mid: 1.004, kick: 0.986, kickFrom: 330 },
+  senko:  { early: 1.014, mid: 1.006, kick: 1.010, kickFrom: 430 },
+  sashi:  { early: 0.990, mid: 1.000, kick: 1.032, kickFrom: 480 },
+  oikomi: { early: 0.977, mid: 0.994, kick: 1.050, kickFrom: 400 },
+};
+/* 距離適性（1人用 aptMulOf と同一: 距離カテゴリの適性値で ±0.25%） */
+const distCatIdxOf = len => len <= 1000 ? 0 : len <= 1500 ? 1 : 2;
+const npcAptMul = (apt, len) => 1 + ((((apt || [1, 1, 1])[distCatIdxOf(len)]) ?? 1) - 1) * 0.0025;
+/* コーナー係数: クライアント cornerFactorAt と同一式（楕円 A=190, B=120 の曲率半径）。
+   引数 lat は物理レーン基準（外が正）。dist はレース距離基準なので、物理コース
+   座標（ゴール固定でスタートが前にずれる分）へ直してから曲率を評価する */
+function npcCornerFactor(room, dist, lat) {
+  const phys = dist + (TRACK_LEN - (room.raceDist || 2000));
+  const t = (phys / TRACK_LEN) * Math.PI * 2;
+  const s = Math.sin(t), c = Math.cos(t);
+  const rho = Math.pow((190 * s) * (190 * s) + (120 * c) * (120 * c), 1.5) / (190 * 120);
+  return rho / (rho + lat);
+}
+/* コーナー判定（1人用 isCorner と同じ物理座標の区間: 直線≈654.5m / 弧≈345.6m） */
+function npcIsCorner(room, dist) {
+  const s = ((dist + (TRACK_LEN - (room.raceDist || 2000))) % TRACK_LEN + TRACK_LEN) % TRACK_LEN;
+  return (s >= 654.5 && s < 1000.1) || s >= 1654.6;
+}
+function npcPhaseIdx(room, dist) { const L = room.raceDist || 2000; return dist < L * 0.3 ? 0 : dist < L * 0.6 ? 1 : dist < L * 0.8 ? 2 : 3; }
+/* ゲートの出遅れ抽選（1人用 startRace の NPC 分布と同一） */
+function rollGateT() {
+  const r = Math.random();
+  return r < 0.7 ? Math.random() * 0.4 : (r < 0.9 ? 0.5 + Math.random() * 0.4 : 1.2 + Math.random() * 0.4);
+}
+function npcRankOf(view, self) { let r = 1; for (const o of view) if (o !== self && o.dist > self.dist) r++; return r; }
+function npcRaceShapeMod(room, n) {
+  const L = room.raceDist || 2000;
+  const pr = NPC_STYLE_PROFILE[n.styleKey], p = n.dist / L, rem = L - n.dist;
+  let m;
+  if (rem < pr.kickFrom) {
+    m = pr.kick;
+    if (room.paceHeat > 0.25) m *= (n.styleKey === 'sashi' || n.styleKey === 'oikomi') ? 1.012 : 0.994;
+  }
+  else if (p < 0.32) m = pr.early;
+  else m = pr.mid;
+  return m;
+}
+/* 作戦（1人用 resetRace の plan 生成を移植）: 局面ごとの目標順位＋仕掛け距離 */
+function npcMakePlan(styleKey, num, startLat) {
+  const pshift = ((num * 7) % 5) - 2;
+  const pbase = styleKey === 'nige' ? [1, 1, 1, 1] : styleKey === 'senko' ? [3, 3, 3, 2]
+    : styleKey === 'sashi' ? [11, 11, 8, 3] : [16, 16, 14, 4];
+  const plan = {
+    pos: pbase.map(v => clampN(v + pshift, 1, 18)),
+    kick: NPC_STYLE_PROFILE[styleKey].kickFrom,
+    gate: num, inside: startLat <= -3.4, outside: startLat >= 3.4,
+  };
+  if (plan.outside && (styleKey === 'nige' || styleKey === 'senko')) plan.pos[0] = clampN(plan.pos[0] + 2, 1, 18);
+  if (plan.outside && (styleKey === 'sashi' || styleKey === 'oikomi')) plan.pos[0] = clampN(plan.pos[0] + 1, 1, 18);
+  if (plan.inside && (styleKey === 'nige' || styleKey === 'senko')) plan.pos[0] = clampN(plan.pos[0] - 1, 1, 18);
+  return plan;
+}
+/* ホームレーン（1人用 homeLat と同じ: 内ラチ沿いを脚質別にずらす） */
+function npcHomeLat(styleKey, num) {
+  const homeBase = styleKey === 'nige' ? -8.9 : styleKey === 'senko' ? -8.5 : styleKey === 'sashi' ? -7.9 : -8.3;
+  return clampN(homeBase + (((num * 29) % 30) / 10 - 1.0), -9.4, -4.8);
+}
+/* NPCのペース判断（1人用 aiPace の移植。view は全ランナーの統一ビュー） */
+function npcAiPace(room, view, n) {
+  const rem = (room.raceDist || 2000) - n.dist, st = n.styleKey, stam = n.stamina;
+  const ph = npcPhaseIdx(room, n.dist);
+  const want = n.plan ? n.plan.pos[ph] : 8;
+  const rank = npcRankOf(view, n);
+  const diff = rank - want; // + = 計画より後ろ、- = 計画より前
+  const kickD = (n.plan ? n.plan.kick : 420) * (stam > 55 ? 1.15 : (stam < 30 ? 0.78 : 1));
+  if (rem < kickD) return stam > 18 ? 'pushL' : 'pushS';
+  if (stam < 18) return 'hold';
+  if (n.dist < 170) { // ゲート後の位置取り
+    if (st === 'nige') return 'pushS';
+    if (st === 'senko') {
+      if (n.plan && n.plan.outside && rank > 4) return 'nari';
+      return rank <= 3 ? 'nari' : 'pushS';
+    }
+    return 'nari'; // 差し・追込は後ろで脚を溜める
+  }
+  // 先頭争いのデュエル判定（消耗戦を避けて引く判断まで1人用どおり）
+  n.duel = false;
+  if (n.dist < 750 && (st === 'nige' || st === 'senko') && rank <= 2) {
+    for (const o of view) {
+      if (o === n) continue;
+      if ((o.styleKey === 'nige' || o.styleKey === 'senko') && npcRankOf(view, o) <= 2 && Math.abs(o.dist - n.dist) < 2.2) {
+        n.duel = true;
+        n.duelYield = o.stamina >= stam && !(st === 'nige' && o.styleKey !== 'nige');
+        break;
+      }
+    }
+    if (n.duel && n.duelYield) return 'nari';
+  }
+  if (stam < 36) return (st === 'sashi' || st === 'oikomi') && ph < 2 ? 'hold' : (diff >= 3 ? 'nari' : 'hold');
+  if (n.blocked && rem > kickD + 60) return diff >= 4 ? 'nari' : 'hold';
+  if (st === 'nige') {
+    if (rank === 1) {
+      let gapB = 1e9;
+      for (const o of view) { if (o !== n) { const gd = n.dist - o.dist; if (gd > 0 && gd < gapB) gapB = gd; } }
+      if (gapB < 1.8) return 'pushS';
+      if (gapB > 6) return 'hold';
+      return 'nari';
+    }
+    if (n.dist < 700 && diff >= 1) return 'pushS';
+    return diff >= 3 ? 'pushS' : 'nari';
+  }
+  if (st === 'senko') {
+    if (rank === 1 && rem > 430) return 'hold';
+    if (diff >= 3) return ph >= 2 ? 'pushS' : 'nari';
+    if (diff >= 1) return stam > 48 ? 'pushS' : 'nari';
+    if (diff <= -2) return 'hold';
+    return 'nari';
+  }
+  if (st === 'sashi') {
+    if (ph <= 1) {
+      if (diff <= -3) return 'hold';
+      return 'nari';
+    }
+    if (ph === 2) {
+      if (room.paceHeat > 0.3 && rem > 620) return 'nari';
+      return (diff >= 2 || stam > 45) ? 'pushS' : 'nari';
+    }
+    return 'pushS';
+  }
+  // oikomi: 最後の直線まで後方で待つ
+  if (rem > 430) {
+    if (ph >= 2 && diff >= 5) return 'pushS';
+    if (diff <= -3) return 'hold';
+    return 'nari';
+  }
+  return 'pushS';
+}
+/* NPCの進路判断（1人用 decideLat の移植: 内ラチがホーム。抜く時だけ一時的に外へ） */
+function npcDecideLat(room, view, n) {
+  const rem = (room.raceDist || 2000) - n.dist, corner = npcIsCorner(room, n.dist);
+  const home = n.homeLat != null ? n.homeLat : -8;
+  const startLat = (n.lane - 8.5) * LANE_W_S;
+  function laneFree(lat, back, range) {
+    for (const o of view) {
+      if (o === n) continue;
+      const dd = o.dist - n.dist;
+      if (dd > back && dd < range && Math.abs(o.lat - lat) < 1.15) return false;
+    }
+    return true;
+  }
+  if (n.dist < 240) {
+    if ((n.styleKey === 'nige' || n.styleKey === 'senko') && n.lat > home + 0.8 && laneFree(n.lat - 1.3, -1.5, 5.5))
+      n.targetLat = n.lat - 1.3;
+    else n.targetLat = startLat;
+    return;
+  }
+  let blocker = null;
+  for (const o of view) {
+    if (o === n || o.finished) continue;
+    const dd = o.dist - n.dist;
+    if (dd > 0.4 && dd < 4.2 && Math.abs(o.lat - n.lat) < 1.15) { blocker = o; break; }
+  }
+  if (blocker) {
+    const inLat = clampN(n.lat - 1.35, -LAT_MAX_S, LAT_MAX_S), outLat = clampN(n.lat + 1.35, -LAT_MAX_S, LAT_MAX_S);
+    const inFree = laneFree(inLat, -1.5, 6.5), outFree = laneFree(outLat, -1.5, 6.5);
+    let pick = null;
+    if (corner || rem < 430) pick = inFree ? inLat : (outFree ? outLat : null);
+    else pick = outFree ? outLat : (inFree ? inLat : null);
+    if (pick != null) { n.targetLat = pick; n.swingLat = pick; n.swingUntil = room.raceClock + 2.4; }
+    else if (room.raceClock < n.swingUntil) n.targetLat = n.swingLat;
+    return;
+  }
+  if (room.raceClock < n.swingUntil) { n.targetLat = n.swingLat; return; }
+  const baseLat = corner ? clampN(home - 0.5, -LAT_MAX_S, LAT_MAX_S) : home;
+  if (rem < 430 && (n.styleKey === 'sashi' || n.styleKey === 'oikomi') && (n.pace === 'pushS' || n.pace === 'pushL')) {
+    const outT = clampN(home + 2.2, -LAT_MAX_S, 4.2);
+    if (laneFree(outT, -1.5, 5.5)) { n.targetLat = outT; return; }
+  }
+  if (Math.abs(n.lat - baseLat) > 0.35 && !laneFree(baseLat, -2.0, 3.0)) { n.targetLat = n.lat; return; }
+  n.targetLat = baseLat;
+}
+/* NPC 1頭分の物理更新（1人用 stepHorse のNPC分岐を移植。
+   馬場補正・距離適性・ゲート出遅れも1人用 stepHorse と同じ式で入る） */
+function stepNpc(room, view, n, dt, now) {
+  const L = room.raceDist || 2000;
+  const going = room.going || CAT.GOING_LIST[0];
+  if (n.finished) {
+    // ゴール後の流し: 決勝線を過ぎても止まらず、勢いのまま減速する
+    const over = n.dist - L;
+    const dec = over < 40 ? 0.7 : (over < 100 ? 1.5 : 2.6);
+    n.speed = Math.max(0, n.speed - dec * dt);
+    n.dist += n.speed * dt * npcCornerFactor(room, n.dist, n.lat);
+    return;
+  }
+  n.aiTimer -= dt;
+  if (n.aiTimer <= 0) { n.aiTimer = 0.7 + ((n.num * 37) % 40) / 100; n.pace = npcAiPace(room, view, n); }
+  n.aiLatTimer -= dt;
+  if (n.aiLatTimer <= 0) { n.aiLatTimer = 0.45; npcDecideLat(room, view, n); }
+  // スリップストリーム判定
+  n.slip = false;
+  for (const o of view) {
+    if (o === n || o.finished) continue;
+    const dd = o.dist - n.dist;
+    if (dd > 1.0 && dd < 8.5 && Math.abs(o.lat - n.lat) < 1.15) { n.slip = true; break; }
+  }
+  const pc = NPC_PACE[n.pace];
+  let drain = pc.stam;
+  if (drain < 0 && n.slip) drain *= (n.styleKey === 'senko' ? 0.32 : 0.45);
+  if (drain < 0) {
+    drain *= going.drain; // 馬場: 重いほど全馬の消費増（1人用 stepHorse と同一）
+    if (going.id !== 'ryo') drain *= (1 + (1 - (n.heavy || 1)) * (going.id === 'ju' ? 1.1 : 0.55)); // 重馬場適性が高い馬は消費が軽い
+    if (room.paceHeat > 0.25 && npcRankOf(view, n) <= 3) drain *= 1.18; // ハイペースを作る先行勢は消耗
+    if (n.duel) drain *= 1.18;
+  }
+  n.stamina = clampN(n.stamina + drain * dt, 0, 100);
+  const tired = n.stamina < 35 ? 0.80 + 0.20 * (n.stamina / 35) : 1;
+  const heavySpd = going.id === 'ryo' ? 1 : (1 + ((n.heavy || 1) - 1) * (going.id === 'ju' ? 1 : 0.55));
+  let target = n.base * (1 + ((n.rating || 90) - 90) * 0.0011) * n.dayForm * npcAptMul(n.apt, L)
+    * pc.mul * npcRaceShapeMod(room, n) * tired * going.speed * heavySpd
+    * (1 + Math.sin(room.raceClock * 0.6 + n.num * 2.3) * 0.004);
+  // 追走キャップ: 前の馬との間隔を保つ（1人用 followCap）
+  if (n.dist > 60) {
+    const wantGap = 2.6 + ((n.num * 13) % 10) / 6;
+    for (const fo of view) {
+      if (fo === n || fo.finished) continue;
+      const fd = fo.dist - n.dist;
+      if (fd > 0.6 && fd < 7.5 && Math.abs(fo.lat - n.lat) < 1.05) {
+        const followCap = fo.speed + clampN((fd - wantGap) * 0.5, -0.7, 1.3);
+        if (followCap < target) target = followCap;
+      }
+    }
+  }
+  // 前詰まりキャップ: 真ん前が壁なら減速（進路変更は decideLat の仕事）
+  n.blocked = false;
+  for (const b of view) {
+    if (b === n || b.finished) continue;
+    const bd = b.dist - n.dist;
+    if (n.dist > 60 && bd > 0.5 && bd < 3.6 && Math.abs(b.lat - n.lat) < 1.02) {
+      const capF = n.lat < -3.4 ? 0.962 : (n.lat > 3.4 ? 1.012 : 0.995);
+      if (b.speed * capF < target) target = b.speed * capF;
+      n.blocked = true;
+    }
+  }
+  if (n.gateT > 0) { n.gateT -= dt; target = Math.min(target, 4.2); } // ゲート出遅れ中は加速できない（1人用と同一）
+  const rate = target > n.speed ? 0.85 : 2.1;
+  n.speed += (target - n.speed) * (1 - Math.exp(-rate * dt));
+  n.dist += n.speed * dt * npcCornerFactor(room, n.dist, n.lat);
+  if (n.dist >= L && !n.finished) {
+    n.finished = true;
+    // ゴール時刻はティック内を補間して精密化（写真判定の0.17秒窓に効く）
+    const over = n.dist - L;
+    n.finishClock = Math.max(0, room.raceClock - (n.speed > 0 ? over / n.speed : 0));
+    n.finishAt = room.raceStartAt + n.finishClock * 1000;
+    broadcast(room, { type: 'runnerFinished', nickname: n.nickname, t: Math.round(n.finishClock * 1000) / 1000 });
+  }
+  // 横移動: 慣性のある「のっそり」した動き（1人用NPCと同値）
+  const wantV = clampN((n.targetLat - n.lat) * 1.4, -1.05, 1.05);
+  const dvv = wantV - n.latVel, maxDv = 1.9 * dt;
+  n.latVel += clampN(dvv, -maxDv, maxDv);
+  n.lat = clampN(n.lat + n.latVel * dt, -LAT_MAX_S, LAT_MAX_S);
+  if ((n.lat <= -LAT_MAX_S && n.latVel < 0) || (n.lat >= LAT_MAX_S && n.latVel > 0)) n.latVel = 0;
+}
+
 function buildField(room) {
-  // 人間の馬以外からNPCを補充して18頭立て
-  const usedIds = new Set([...room.members.values()].map(m => m.horseId));
-  const pool = HORSES.filter(h => !usedIds.has(h.id));
-  // 人間が選んだ馬がカタログ外でもNPCはカタログから
+  const L = room.raceDist || 2000;
+  room.going = CAT.rollGoing(); // 馬場は開催ごとに抽選（1人用 pickGoing と同じ比率）
+  // AI騎手の割り当て（1人用 assignJockeys と同一: 架空名18名をシャッフルして重複なし）
+  const jockeyPool = [...CAT.AI_JOCKEYS];
+  for (let i = jockeyPool.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [jockeyPool[i], jockeyPool[j]] = [jockeyPool[j], jockeyPool[i]]; }
+  let jk = 0;
+  const nextJockey = () => jockeyPool[jk++ % jockeyPool.length];
   room.npcs = [];
-  let lane = room.members.size;
-  while (room.members.size + room.npcs.length < FIELD_SIZE && pool.length) {
-    const h = pool.splice(crypto.randomInt(pool.length), 1)[0];
-    room.npcs.push({
-      nickname: 'NPC・' + h.name, horseId: h.id, horseName: h.name, npc: true,
-      dist: 0, lane: lane++, speed: 0, finished: false, finishAt: null,
-      baseSpeed: 15.2 + (h.rating - 87) * 0.22 + Math.random() * 0.5, // ratingで差、ただし僅差
-      style: h.style, stamina: 100,
+  if (room.mode === 'watch' && room.watchSession) {
+    // 観戦: 出走表はセッションの18頭そのまま。全頭NPCで、調子は新聞の form を使う
+    room.watchSession.field.forEach((name, lane) => {
+      const h = horseByName(name);
+      if (!h) return;
+      const styleKey = NPC_STYLE_KEY[h.style] || 'senko';
+      const startLat = (lane - 8.5) * LANE_W_S;
+      room.npcs.push(makeNpc(room, h, lane, nextJockey(), room.watchSession.form[name] || 1, startLat, styleKey));
     });
+  } else {
+    // 騎手: 人間の馬以外からNPCを補充して18頭立て（名簿50頭からランダム抽選）
+    const usedIds = new Set([...room.members.values()].map(m => m.horseId));
+    const pool = HORSES.filter(h => !usedIds.has(h.id));
+    let lane = room.members.size;
+    while (room.members.size + room.npcs.length < FIELD_SIZE && pool.length) {
+      const h = pool.splice(crypto.randomInt(pool.length), 1)[0];
+      const styleKey = NPC_STYLE_KEY[h.style] || 'senko';
+      const startLat = (lane - 8.5) * LANE_W_S;
+      room.npcs.push(makeNpc(room, h, lane++, nextJockey(), 1 + (Math.random() - 0.5) * 0.007, startLat, styleKey));
+    }
   }
   let i = 0;
-  for (const m of room.members.values()) { m.lane = i++; m.dist = 0; m.speed = 0; m.finished = false; m.finishAt = null; }
+  for (const m of room.members.values()) {
+    m.lane = i++; m.dist = 0; m.speed = 0; m.finished = false; m.finishAt = null;
+    m.fouls = 0; m.finishClock = null;
+    m.dayForm = 1 + (Math.random() - 0.5) * 0.007; // 人間にも当日の調子を抽選（クライアントが自馬分を受け取る）
+    m.jockey = m.nickname;
+  }
+}
+function makeNpc(room, h, lane, jockey, dayForm, startLat, styleKey) {
+  return {
+    nickname: 'NPC・' + h.name, horseId: h.id, horseName: h.name, npc: true, jockey,
+    dist: 0, lane, speed: 0, finished: false, finishAt: null, finishClock: null,
+    style: h.style,
+    // ---- 1人用エンジン移植の走行状態 ----
+    num: h.num, rating: h.rating, styleKey,
+    base: h.base, heavy: h.heavy, apt: h.apt,
+    dayForm,
+    gateT: rollGateT(),
+    lat: startLat, targetLat: startLat, latVel: 0,
+    stamina: 100, pace: 'nari',
+    aiTimer: 0.5 + ((h.num * 53) % 50) / 100, aiLatTimer: 0.4 + ((h.num * 29) % 30) / 100,
+    plan: npcMakePlan(styleKey, h.num, startLat), homeLat: npcHomeLat(styleKey, h.num),
+    swingUntil: 0, swingLat: 0, duel: false, duelYield: false, blocked: false, slip: false,
+  };
 }
 function fieldList(room) {
+  if (room.mode === 'watch') {
+    // 観戦: 出走するのは18頭のNPCだけ（オーナーは走らない）
+    return room.npcs.map(n => ({
+      nickname: n.nickname, horseId: n.horseId, horseName: n.horseName, npc: true, lane: n.lane,
+      style: n.style, dayForm: n.dayForm, jockey: n.jockey,
+    })).sort((a, b) => a.lane - b.lane);
+  }
   const humans = [...room.members.values()].map(m => ({
     nickname: m.nickname, horseId: m.horseId, horseName: horseById(m.horseId)?.name || m.horseId, npc: false, lane: m.lane,
+    style: horseById(m.horseId)?.style || '先行', dayForm: m.dayForm || 1, jockey: m.nickname,
   }));
-  const npcs = room.npcs.map(n => ({ nickname: n.nickname, horseId: n.horseId, horseName: n.horseName, npc: true, lane: n.lane }));
+  const npcs = room.npcs.map(n => ({
+    nickname: n.nickname, horseId: n.horseId, horseName: n.horseName, npc: true, lane: n.lane,
+    style: n.style, dayForm: n.dayForm, jockey: n.jockey,
+  }));
   return [...humans, ...npcs].sort((a, b) => a.lane - b.lane);
 }
 function startRace(room) {
   if (room.state !== 'countdown') return;
   room.state = 'racing';
+  room.paceHeat = 0; room.raceClock = 0; // 全体ペース判定（1人用 paceHeat）をリセット
   const now0 = Date.now();
   for (const m of room.members.values()) { m.lastPosAt = now0; m.dist = 0; m.speed = 0; }
-  broadcast(room, { type: 'raceStart', field: fieldList(room) });
+  broadcast(room, { type: 'raceStart', field: fieldList(room), meta: raceMeta(room) });
   let last = Date.now();
   room.tickTimer = setInterval(() => {
     const now = Date.now();
@@ -253,26 +766,37 @@ function startRace(room) {
   }, 100);
 }
 function tickNpcs(room, dt, now) {
-  for (const n of room.npcs) {
-    if (n.finished) continue;
-    const prog = n.dist / TRACK_LEN;
-    // 脚質: 逃げは序盤速く終盤失速、追込は逆
-    let f = 1;
-    if (n.style === '逃げ') f = prog < 0.6 ? 1.05 : 0.94;
-    else if (n.style === '追込') f = prog < 0.6 ? 0.95 : 1.06;
-    else if (n.style === '差し') f = prog < 0.5 ? 0.98 : 1.03;
-    n.speed = n.baseSpeed * f;
-    n.dist += n.speed * dt;
-    if (n.dist >= TRACK_LEN) { n.dist = TRACK_LEN; n.finished = true; n.finishAt = now; }
+  room.raceClock = (room.raceClock || 0) + dt;
+  if (room.paceHeat == null) room.paceHeat = 0;
+  // 全ランナーの統一ビュー（人間はサーバー検証済みの dist/lane/speed から組み立てる）
+  const view = [];
+  for (const m of room.members.values()) {
+    view.push({
+      dist: m.dist, speed: m.speed, lat: (m.lane - 8.5) * LANE_W_S, finished: m.finished,
+      styleKey: NPC_STYLE_KEY[(horseById(m.horseId) || {}).style] || 'senko', stamina: 100, human: true,
+    });
   }
+  for (const n of room.npcs) view.push(n);
+  // 全体ペース（1人用 paceHeat の更新式そのまま: 先頭馬の速度から算出）
+  let lead = view[0];
+  for (const r of view) if (r.dist > lead.dist) lead = r;
+  const L = room.raceDist || 2000;
+  if (lead && lead.dist < L * 0.45) {
+    room.paceHeat += (clampN((lead.speed - 16.7) / 1.1, -1, 1) - room.paceHeat) * Math.min(1, dt * 0.6);
+  }
+  if (lead && lead.dist < L * 0.375 && view.some(r => r.duel)) {
+    room.paceHeat += (0.55 - room.paceHeat) * Math.min(1, dt * 0.5);
+  }
+  for (const n of room.npcs) stepNpc(room, view, n, dt, now);
 }
 function allPositions(room) {
-  const humans = [...room.members.values()].map(m => ({
+  const humans = room.mode === 'watch' ? [] : [...room.members.values()].map(m => ({
     nickname: m.nickname, dist: Math.round(m.dist * 10) / 10, lane: m.lane,
     speed: Math.round(m.speed * 10) / 10, finished: m.finished, npc: false,
   }));
   const npcs = room.npcs.map(n => ({
-    nickname: n.nickname, dist: Math.round(n.dist * 10) / 10, lane: n.lane,
+    nickname: n.nickname, dist: Math.round(n.dist * 10) / 10,
+    lane: Math.round((8.5 + n.lat / LANE_W_S) * 100) / 100, // 現在の横位置を連続レーンで配信
     speed: Math.round(n.speed * 10) / 10, finished: n.finished, npc: true,
   }));
   return [...humans, ...npcs];
@@ -280,45 +804,126 @@ function allPositions(room) {
 function checkRaceEnd(room, now) {
   if (room.state !== 'racing') return;
   const humans = [...room.members.values()];
-  const allHumansDone = humans.every(m => m.finished);
   const anyFinished = [...humans, ...room.npcs].some(r => r.finished);
   if (!room.firstFinishAt && anyFinished) {
     room.firstFinishAt = now;
     // 最初のゴールから20秒で打ち切り
     room.finishTimer = setTimeout(() => finishRace(room), 20000);
   }
+  if (room.mode === 'watch') {
+    if (room.npcs.length && room.npcs.every(n => n.finished)) finishRace(room);
+    return;
+  }
+  const allHumansDone = humans.every(m => m.finished);
   if (allHumansDone && room.npcs.every(n => n.finished)) finishRace(room);
 }
 function finishRace(room) {
   if (room.state === 'finished') return;
   room.state = 'finished';
   clearInterval(room.tickTimer); clearTimeout(room.finishTimer);
-  const all = [...room.members.values(), ...room.npcs];
-  const done = all.filter(r => r.finished).sort((a, b) => a.finishAt - b.finishAt);
-  const notDone = all.filter(r => !r.finished).sort((a, b) => b.dist - a.dist);
-  const standings = [...done, ...notDone].map((r, i) => ({
-    place: i + 1, nickname: r.nickname,
-    horseName: r.npc ? r.horseName : (horseById(r.horseId)?.name || r.horseId),
-    npc: !!r.npc, dist: Math.round(r.dist),
-    time: r.finished ? Math.round((r.finishAt - room.raceStartAt - 3000) / 100) / 10 : null,
-  }));
-  // プレイヤー成績を保存（出走数・勝利数・簡易賞金）
-  for (const m of room.members.values()) {
-    const st = standings.find(s => s.nickname === m.nickname);
-    const p = players[m.nickname];
-    if (p && st) {
-      p.races += 1;
-      if (st.place === 1) p.wins += 1;
-      const prize = [1500, 600, 300, 150, 100][st.place - 1] || 0;
-      p.balance += prize;
-      st.prize = prize;
-    }
+  const L = room.raceDist || 2000;
+  const clockOf = r => r.npc ? (r.finishClock != null ? r.finishClock : Infinity)
+    : (r.finishAt != null ? (r.finishAt - room.raceStartAt) / 1000 : Infinity);
+  const all = room.mode === 'watch' ? [...room.npcs] : [...room.members.values(), ...room.npcs];
+  // 生の着順: 完走はゴール時刻順、未完走は距離順（1人用 showResult の並びと同一）
+  const raw = [...all].sort((a, b) => {
+    const ca = clockOf(a), cb = clockOf(b);
+    if (ca !== Infinity && cb !== Infinity) return ca - cb;
+    if (ca !== Infinity) return -1;
+    if (cb !== Infinity) return 1;
+    return b.dist - a.dist;
+  });
+  raw.forEach((r, i) => { r.rawPlace = i + 1; });
+  // 降着（1人用 showResult と同一: 反則3回以上で +2、5回以上で +3、最大18位）
+  const official = [...raw];
+  for (const r of raw) {
+    if (r.npc || !r.fouls || r.fouls < 3) continue;
+    const penalty = r.fouls >= 5 ? 3 : 2;
+    const from = official.indexOf(r);
+    official.splice(from, 1);
+    official.splice(Math.min(official.length, from + penalty), 0, r);
   }
-  persistAll();
+  const winner = official[0];
+  const winnerJockey = winner ? (winner.npc ? winner.jockey : winner.nickname) : undefined;
+  const winnerHorseName = winner ? (winner.npc ? winner.horseName : (horseById(winner.horseId)?.name || winner.horseId)) : undefined;
+  const standings = official.map((r, i) => {
+    const t = clockOf(r);
+    return {
+      place: i + 1, rawPlace: r.rawPlace, nickname: r.nickname,
+      horseName: r.npc ? r.horseName : (horseById(r.horseId)?.name || r.horseId),
+      horseId: r.horseId, jockey: r.npc ? r.jockey : r.nickname,
+      npc: !!r.npc, dist: Math.round(r.dist),
+      time: t !== Infinity ? Math.round(t * 100) / 100 : null,
+      fouls: r.npc ? 0 : (r.fouls || 0),
+    };
+  });
+  let betResult = null;
+  if (room.mode === 'watch') {
+    // 観戦: 本人の賭けを精算し、ランキングへ記録（1人用 settleBet 相当をサーバーで完結）
+    const owner = room.owner && players[room.owner] ? normalizePlayer(players[room.owner]) : null;
+    if (owner) {
+      const order = standings.map(s2 => s2.horseName);
+      recordRaceResultFor(owner, winnerJockey);
+      if (room.betId != null) {
+        const bet = owner.bets.find(b => b.id === room.betId);
+        if (bet && bet.settled !== 1) {
+          const won = CAT.betWon(bet.type, bet.picks, order);
+          const payout = won ? Math.floor(bet.stake * bet.odds * (bet.grade === 'g1' ? CAT.G1_PAYOUT_MULT : 1)) : 0;
+          bet.settled = 1; bet.payout = payout;
+          if (won) {
+            if (bet.type === 'wide') bumpCounter(owner, 'wide_hits');
+            if (bet.type === 'trifecta') bumpCounter(owner, 'trifecta_hits');
+            if (bet.grade === 'g1') bumpCounter(owner, 'g1_wins');
+          }
+          if (payout > 0) owner.balance += payout;
+          betResult = { betId: bet.id, type: bet.type, picks: bet.picks, stake: bet.stake, odds: bet.odds, grade: bet.grade, won, payout, balance: owner.balance };
+        }
+      }
+      if (owner.watchSession && owner.watchSession.betId === room.betId) owner.watchSession = null;
+      persistPlayer(room.owner);
+    }
+  } else {
+    // 騎手: 公式着順で賞金・成績・ミッション進捗・ランキングを記録（1人用 awardPrize 相当）
+    for (const m of room.members.values()) {
+      const st = standings.find(s2 => s2.nickname === m.nickname);
+      const p = players[m.nickname];
+      if (p && st) {
+        normalizePlayer(p);
+        p.races += 1;
+        if (st.place === 1) p.wins += 1;
+        const prize = CAT.prizeForRank(st.place, room.grade || 'normal', L);
+        p.balance += prize;
+        st.prize = prize;
+        bumpCounter(p, 'jockey_starts');
+        if (prize > 0) bumpCounter(p, 'jockey_prize_total', prize);
+        if (st.place === 1) {
+          bumpCounter(p, 'jockey_wins');
+          if ((room.grade || 'normal') === 'g1') bumpCounter(p, 'g1_wins');
+        }
+        recordRaceResultFor(p, winnerJockey);
+      }
+    }
+    persistAll();
+  }
   room.results = standings;
-  broadcast(room, { type: 'results', standings });
+  broadcast(room, { type: 'results', standings, meta: raceMeta(room), winnerJockey, winnerHorseName, betResult });
 }
 function leaveRoom(room, nickname) {
+  // 観戦レースを途中で離れたら、未精算の賭けは返金して部屋を畳む（1人用 refundBet 相当）
+  if (room.mode === 'watch' && room.owner === nickname && room.state !== 'finished' && room.betId != null) {
+    const p = players[nickname];
+    if (p) {
+      normalizePlayer(p);
+      const bet = p.bets.find(b => b.id === room.betId);
+      if (bet && bet.settled !== 1) {
+        bet.settled = 1; bet.payout = bet.stake; bet.refunded = 1;
+        p.balance += bet.stake;
+        persistPlayer(nickname);
+      }
+      if (p.watchSession) p.watchSession = null;
+    }
+    room.betId = null;
+  }
   const m = room.members.get(nickname);
   if (m) m.ws = null;
   if (room.state === 'lobby') {
@@ -360,11 +965,61 @@ wss.on('connection', ws => {
         if (room) leaveRoom(room, nickname);
         room = createRoom(nickname);
         room.solo = true;
+        room.mode = 'jockey';
+        room.raceDist = CAT.DISTANCES.includes(msg.distance) ? msg.distance : 2000;
+        room.grade = consumeGrade(nickname);
         member = addMember(room, nickname, ws);
         if (msg.horseId && players[nickname].unlocked.includes(msg.horseId)) member.horseId = msg.horseId;
         member.ready = true;
         send(ws, { type: 'room', room: roomSummary(room) });
         maybeStartCountdown(room);
+        break;
+      }
+      case 'watchStart': {
+        // 観戦モード: 本人のセッション（出走表＋調子）の18頭でAIレースを開始し、賭けを精算まで見届ける
+        if (room) leaveRoom(room, nickname);
+        const p = normalizePlayer(players[nickname]);
+        const sess = p.watchSession;
+        if (!sess || !Array.isArray(sess.field) || sess.field.length !== FIELD_SIZE) { send(ws, { type: 'error', message: '観戦レースの準備ができていません' }); break; }
+        const bet = sess.betId != null ? p.bets.find(b => b.id === sess.betId) : null;
+        if (!bet || bet.settled === 1) { send(ws, { type: 'error', message: '先に賭け券を購入してください' }); break; }
+        room = createRoom(nickname);
+        room.mode = 'watch';
+        room.owner = nickname;
+        room.watchSession = sess;
+        room.betId = bet.id;
+        room.raceDist = sess.distance || 2000;
+        room.grade = sess.grade || 'normal';
+        member = addMember(room, nickname, ws);
+        member.ready = true;
+        send(ws, { type: 'room', room: roomSummary(room) });
+        maybeStartCountdown(room);
+        break;
+      }
+      case 'skip': {
+        // 観戦スキップ（1人用 skipToFinal と同じ意味: 実シミュレーションを早回しする。
+        // 1500m/2000mのみ「残り1000m」まで。1000mレースには無い）
+        if (!room || room.mode !== 'watch' || room.state !== 'racing') break;
+        const L = room.raceDist || 2000;
+        if (L <= 1000) break;
+        const target = L - 1000;
+        let guard = 0;
+        while (guard++ < 30000) {
+          let lead = 0;
+          for (const n of room.npcs) if (n.dist > lead) lead = n.dist;
+          if (lead >= target || room.npcs.every(n => n.finished)) break;
+          tickNpcs(room, 0.05, Date.now());
+        }
+        broadcast(room, { type: 'state', t: Date.now(), runners: allPositions(room) });
+        checkRaceEnd(room, Date.now());
+        break;
+      }
+      case 'watchAbort': {
+        if (room && room.mode === 'watch') {
+          leaveRoom(room, nickname); // 未精算の賭けは leaveRoom 内で返金される
+          room = null; member = null;
+          send(ws, { type: 'watchAborted' });
+        }
         break;
       }
       case 'leaveRoom': {
@@ -374,6 +1029,9 @@ wss.on('connection', ws => {
       case 'createRoom': {
         if (room) leaveRoom(room, nickname);
         room = createRoom(nickname);
+        room.mode = 'jockey';
+        room.raceDist = CAT.DISTANCES.includes(msg.distance) ? msg.distance : 2000;
+        room.grade = consumeGrade(nickname);
         member = addMember(room, nickname, ws);
         send(ws, { type: 'room', room: roomSummary(room) });
         break;
@@ -412,9 +1070,10 @@ wss.on('connection', ws => {
         const now = Date.now();
         const dt = Math.max(0, (now - (member.lastPosAt || now)) / 1000);
         member.lastPosAt = now;
+        const raceLen = room.raceDist || 2000;
         const reported = Number(msg.dist);
         if (Number.isFinite(reported)) {
-          const target = Math.min(TRACK_LEN, Math.max(0, reported));
+          const target = Math.min(raceLen, Math.max(0, reported));
           const delta = target - member.dist;
           if (delta > 0) {
             const accepted = Math.min(delta, MAX_SPEED * dt + POS_JITTER_M);
@@ -424,10 +1083,15 @@ wss.on('connection', ws => {
         }
         const lane = Number(msg.lane);
         if (Number.isFinite(lane)) member.lane = Math.min(FIELD_SIZE - 1, Math.max(0, lane));
-        if (member.dist >= TRACK_LEN) {
-          member.dist = TRACK_LEN;
+        // 反則回数はクライアントの自己申告（自分の順位を下げる方向にしか効かないため受理する）
+        const fouls = Number(msg.fouls);
+        if (Number.isFinite(fouls)) member.fouls = Math.max(member.fouls || 0, Math.min(99, Math.floor(fouls)));
+        if (member.dist >= raceLen) {
+          member.dist = raceLen;
           member.finished = true;
           member.finishAt = now; // サーバー時刻で確定
+          member.finishClock = (now - room.raceStartAt) / 1000;
+          broadcast(room, { type: 'runnerFinished', nickname: member.nickname, t: Math.round(member.finishClock * 1000) / 1000 });
         }
         break;
       }
@@ -451,6 +1115,7 @@ wss.on('connection', ws => {
     store = createStore(process.env, { dataFile: DATA_FILE });
     const loaded = await store.init();   // PostgreSQL時はテーブル自動作成＋全件読み込み
     Object.assign(players, loaded);
+    for (const k of Object.keys(players)) normalizePlayer(players[k]); // 旧データに拡張フィールドを補う
     console.log(`[store] 保存先: ${store.describe()}（プレイヤー ${Object.keys(players).length} 件を読み込み）`);
   } catch (e) {
     // DATABASE_URL の設定ミス等で保存先が使えない場合は、データを守るため起動を止めて気づけるようにする
