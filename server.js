@@ -463,7 +463,7 @@ const NPC_PACE = {
   pushL: { mul: 1.19,  stam: -3.0 },
 };
 const NPC_STYLE_PROFILE = {
-  nige:   { early: 1.030, mid: 1.004, kick: 0.986, kickFrom: 330 },
+  nige:   { early: 1.030, mid: 1.004, kick: 1.004, kickFrom: 330 }, // kick はフェーズ26で 0.986→1.004（クライアント STYLE_PROFILE と同値）: 残り330mで目標速度が1.8%落ちる段差を無くし中盤の速さを維持
   senko:  { early: 1.014, mid: 1.006, kick: 1.010, kickFrom: 430 },
   /* 差し・追込の early/mid は1人用より僅かに引き上げた（仕様§5対応の意図的な
      逸脱）: 1人用の値のままだと馬群が縦長に伸びた時点で差し・追込の赤字が
