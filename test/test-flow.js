@@ -281,15 +281,25 @@ async function main() {
     const grabFn = re => { const m = htmlSrc.match(re); if (!m) throw new Error('抽出失敗: ' + re); return m[0]; };
     const closeFinishOf = new Function(
       grabFn(/const CLOSE_GAP_SEC = [0-9.]+;/) + '\n'
+      + grabFn(/const PHOTO_GAP_SEC = [0-9.]+;/) + '\n'
       + grabFn(/function marginTerm\(diffSec\) \{[\s\S]*?\n\}/) + '\n'
       + grabFn(/function closeFinishOf\(standings\) \{[\s\S]*?\n\}/)
       + '\nreturn closeFinishOf;')();
     const mkStandings = (t1, t2) => [
       { nickname: 'X', horseName: '馬X', time: t1 }, { nickname: 'Y', horseName: '馬Y', time: t2 },
     ];
+    // フェーズ36: 閾値はユーザー指定で 0.12秒 → 0.4秒 に緩和
     ok(closeFinishOf(mkStandings(100, 100.12)) !== null, '僅差判定: 着差0.12秒は発動');
-    ok(closeFinishOf(mkStandings(100, 100.13)) === null, '僅差判定: 着差0.13秒は発動しない');
+    ok(closeFinishOf(mkStandings(100, 100.4)) !== null, '僅差判定: 着差0.40秒は発動（新閾値）');
+    ok(closeFinishOf(mkStandings(100, 100.41)) === null, '僅差判定: 着差0.41秒は発動しない');
     ok(closeFinishOf(mkStandings(100, null)) === null, '僅差判定: 2着が未完走(time=null)は発動しない');
+    // 写真判定フラグ: 写真判定の絵は着差 < 0.17秒（PHOTO_GAP_SEC）の場合だけ
+    const ciPhoto = closeFinishOf(mkStandings(100, 100.1));
+    ok(ciPhoto && ciPhoto.photo === true, '僅差判定: 着差0.10秒は写真判定フラグON');
+    const ciEdge = closeFinishOf(mkStandings(100, 100.17));
+    ok(ciEdge && ciEdge.photo === false, '僅差判定: 着差0.17秒は写真判定フラグOFF（< 0.17 が条件）');
+    const ciWide = closeFinishOf(mkStandings(100, 100.3));
+    ok(ciWide && ciWide.photo === false, '僅差判定: 着差0.30秒は発動するが写真判定フラグOFF（絵は出さない）');
 
     // 部屋レースで僅差を決定的に作る: 両者をゴール手前1190mまで進め、
     // 最後の pos を同タイミングで送って 1・2着の着差を ≈0 にする。
@@ -318,12 +328,12 @@ async function main() {
     ]);
     ok(!rcA.standings[0].npc && !rcA.standings[1].npc, '部屋僅差: 1・2着は両プレイヤー');
     const closeGap = rcA.standings[1].time - rcA.standings[0].time;
-    ok(closeGap <= 0.12, `部屋僅差: 1-2着の着差 ${closeGap.toFixed(3)}秒 ≤ 0.12秒`);
+    ok(closeGap <= 0.4, `部屋僅差: 1-2着の着差 ${closeGap.toFixed(3)}秒 ≤ 0.4秒（フェーズ36の閾値）`);
     const sig = r => r.standings.map(s => s.nickname + ':' + s.time).join('|');
     ok(sig(rcA) === sig(rcB), '部屋僅差: 両クライアントの着順・タイムが完全一致（サーバー確定値）');
     const ciA = closeFinishOf(rcA.standings), ciB = closeFinishOf(rcB.standings);
-    ok(!!ciA && !!ciB && ciA.gap === ciB.gap && ciA.term === ciB.term,
-      `部屋僅差: 両クライアントで僅差判定が一致し発動（${ciA ? ciA.term : '—'}）→ ボタン表示・自動再生の導線に乗る`);
+    ok(!!ciA && !!ciB && ciA.gap === ciB.gap && ciA.term === ciB.term && ciA.photo === ciB.photo && ciA.photo === true,
+      `部屋僅差: 両クライアントで僅差判定が一致し発動（${ciA ? ciA.term : '—'}・写真判定フラグも一致）→ ボタン表示・自動再生の導線に乗る`);
     ca2.ws.close(); cb2.ws.close();
 
     console.log('— ゲートタイミング合わせ: タイムアウト自動確定（フェーズ35） —');
