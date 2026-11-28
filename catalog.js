@@ -68,7 +68,7 @@ const HORSES = [
   ],
   "rating": 91,
   "base": 16.86,
-  "price": 2500,
+  "price": 0,
   "heavy": 1.04,
   "coat": 3351062,
   "mane": 919557,
@@ -164,7 +164,7 @@ const HORSES = [
   ],
   "rating": 90,
   "base": 16.88,
-  "price": 1500,
+  "price": 0,
   "heavy": 0.96,
   "coat": 6502685,
   "mane": 1379333,
@@ -332,7 +332,7 @@ const HORSES = [
   ],
   "rating": 91,
   "base": 16.91,
-  "price": 2500,
+  "price": 0,
   "heavy": 1.01,
   "coat": 5123610,
   "mane": 1050885,
@@ -716,7 +716,7 @@ const HORSES = [
   ],
   "rating": 90,
   "base": 16.9,
-  "price": 1500,
+  "price": 0,
   "heavy": 0.99,
   "coat": 3022869,
   "mane": 853764,
@@ -1211,7 +1211,16 @@ const horseById = id => HORSES.find(h => h.id === id);
 const horseByName = name => HORSES.find(h => h.name === name);
 const FIELD_SIZE = 18;
 const STARTER_IDS = HORSES.filter(h => h.price === 0).map(h => h.id);
-const INITIAL_BALANCE = 1000;
+/* 初期解放（price=0）の構成（フェーズ22で4頭→8頭に強化）:
+   逃げ: キタサンブラック(91) / 先行: ソダシ(87)・メジロマックイーン(88)・ジェンティルドンナ(91)
+   差し: ウオッカ(89)・ドゥラメンテ(89)・リバティアイランド(90) / 追込: ブエナビスタ(90)
+   全脚質を最低1頭カバーし、レーティング90以上を4頭含む（従来は87〜89のみで
+   「初期馬が弱すぎる」との指摘）。残り42頭は従来どおり解放で集める。 */
+/* 初期所持金（フェーズ22: 「初期馬が弱すぎる・手持ち1万Gくらいあってもいい」を受けて
+   1,000G→10,000G。最上位の解放価格5,000Gでも序盤に1〜2頭は解放でき、
+   初期解放8頭と合わせて序盤から戦える額。新規登録のみに適用され、
+   既存プレイヤーの残高は変更しない） */
+const INITIAL_BALANCE = 10000;
 
 /* レース名・グレード（1人用 horses.ts RACE_INFO / rollGrade と同一） */
 const RACE_INFO = {
