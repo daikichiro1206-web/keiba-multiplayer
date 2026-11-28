@@ -109,7 +109,7 @@ async function main() {
   }));
   const server = spawn('node', ['server.js'], {
     cwd: __dirname + '/..',
-    env: { ...process.env, PORT, DATA_DIR: dataDir, KEIBA_MAX_SPEED: '600' },
+    env: { ...process.env, PORT, DATA_DIR: dataDir, KEIBA_MAX_SPEED: '600', KEIBA_GATE_TIMING_MS: '2500' },
     stdio: 'pipe',
   });
   server.stderr.on('data', d => process.stderr.write('[server] ' + d));
@@ -173,6 +173,24 @@ async function main() {
     await wait(300);
     send(ca, { type: 'ready', ready: true });
     send(cb, { type: 'ready', ready: true });
+
+    console.log('— ゲートタイミング合わせ（フェーズ35: 部屋レースの開始フロー） —');
+    // 全員readyでも即発走せず、まずタイミング合わせフェーズに入る
+    const gtA = await ca.waitFor('gateTiming');
+    await cb.waitFor('gateTiming');
+    ok(gtA.field && gtA.field.length === 18 && gtA.timeoutSec > 0, 'タイミング合わせ: 全員readyで gateTiming 配信（出走表18頭＋制限時間）');
+    await wait(600);
+    ok(!ca.inbox.some(m => m.type === 'countdown') && !ca.inbox.some(m => m.type === 'raceStart'),
+      'タイミング合わせ: 誰も入力していない間はカウントダウンも発走もしない');
+    send(ca, { type: 'gateInput', gateT: 0, boost: true }); // Aはパーフェクト入力
+    await wait(500);
+    ok(!ca.inbox.some(m => m.type === 'countdown'), 'タイミング合わせ: 1人だけ入力してもまだ始まらない');
+    const roomGate = ca.inbox.filter(m => m.type === 'room').pop();
+    ok(roomGate && roomGate.room.state === 'gateTiming'
+      && roomGate.room.players.find(p => p.nickname === 'テストA' + stamp).gateDone === true
+      && roomGate.room.players.find(p => p.nickname === 'テストB' + stamp).gateDone === false,
+      'タイミング合わせ: 入力状況がロビー配信に反映される（A済み/B未）');
+    send(cb, { type: 'gateInput', gateT: 1.5, boost: false }); // Bも入力 → 全員分が揃う
     const [ra, rb] = await Promise.all([
       raceToFinish(ca, 'A', 'テストA' + stamp, true),
       raceToFinish(cb, 'B', 'テストB' + stamp),
@@ -183,7 +201,198 @@ async function main() {
     const meA = ra.standings.find(s => s.nickname === 'テストA' + stamp);
     ok(meA && meA.dist === 2000, '結果: Aは検証済みストリームで2000m完走扱い');
     ok(rb.standings.length === 18, '結果: B側にも着順表が配信');
+    const cdGate = ca.inbox.find(m => m.type === 'countdown');
+    ok(cdGate && cdGate.gate && cdGate.gate['テストA' + stamp].gateT === 0 && cdGate.gate['テストA' + stamp].boost === true
+      && cdGate.gate['テストB' + stamp].gateT === 1.5 && cdGate.gate['テストB' + stamp].boost === false,
+      'タイミング合わせ: カウントダウンに各人の入力結果がそのまま同梱される');
+
+    console.log('— 再戦フロー（フェーズ34: レース後の準備リセット） —');
+    // inbox の現在位置以降に届いたメッセージだけを待つ（過去の同種メッセージに誤マッチしない）
+    const waitSince = (c, mark, type, timeout = 20000) => new Promise((res, rej) => {
+      const found = c.inbox.slice(mark).find(m => m.type === type);
+      if (found) return res(found);
+      const to = setTimeout(() => rej(new Error('timeout waiting for fresh ' + type)), timeout);
+      c.waiters.push(m => { if (m.type === type) { clearTimeout(to); res(m); return true; } return false; });
+    });
+    const waitRoomWhere = (c, mark, pred, timeout = 10000) => new Promise((res, rej) => {
+      const found = c.inbox.slice(mark).find(m => m.type === 'room' && pred(m.room));
+      if (found) return res(found);
+      const to = setTimeout(() => rej(new Error('timeout waiting for matching room')), timeout);
+      c.waiters.push(m => { if (m.type === 'room' && pred(m.room)) { clearTimeout(to); res(m); return true; } return false; });
+    });
+    const rematchRace = async label => {
+      const mA = ca.inbox.length, mB = cb.inbox.length;
+      send(ca, { type: 'ready', ready: true });
+      send(cb, { type: 'ready', ready: true });
+      // フェーズ35: 部屋レースは ready → タイミング合わせ → 全員入力 → カウントダウン
+      await waitSince(ca, mA, 'gateTiming');
+      await waitSince(cb, mB, 'gateTiming');
+      send(ca, { type: 'gateInput', gateT: 0.3, boost: false });
+      send(cb, { type: 'gateInput', gateT: 0.8, boost: false });
+      const cd = await waitSince(ca, mA, 'countdown');
+      ok(cd.field && cd.field.length === 18, `${label}: カウントダウン＋出走表18頭`);
+      ok(cd.gate && cd.gate['テストA' + stamp].gateT === 0.3 && cd.gate['テストB' + stamp].gateT === 0.8,
+        `${label}: タイミング合わせの入力結果がカウントダウンに同梱`);
+      await waitSince(cb, mB, 'countdown');
+      await waitSince(ca, mA, 'raceStart');
+      await Promise.all([driveToFinish(ca), driveToFinish(cb)]);
+      const [rA, rB] = await Promise.all([
+        waitSince(ca, mA, 'results', 60000),
+        waitSince(cb, mB, 'results', 60000),
+      ]);
+      ok(rA.standings.length === 18 && rB.standings.length === 18, `${label}: 両者に着順表18頭`);
+    };
+
+    // 経路1: 結果画面で A が「ロビーに戻る」(backToLobby) → 全員の準備がリセットされる
+    const mkA = ca.inbox.length, mkB = cb.inbox.length;
+    send(ca, { type: 'backToLobby' });
+    const roomResetA = await waitSince(ca, mkA, 'room', 10000);
+    const roomResetB = await waitSince(cb, mkB, 'room', 10000);
+    ok(roomResetA.room.state === 'lobby' && roomResetA.room.code === code, '再戦: backToLobbyで同じ部屋がロビーに戻る');
+    ok(roomResetA.room.players.length === 2 && roomResetA.room.distance === 2000, '再戦: メンバーと距離はそのまま');
+    ok(roomResetA.room.players.every(p => p.ready === false), '再戦: 全員の準備が未完了にリセット（A側配信）');
+    ok(roomResetB.room.players.every(p => p.ready === false), '再戦: 全員の準備が未完了にリセット（B側配信）');
+    await rematchRace('再戦1回目');
+
+    // 経路2（復旧）: backToLobby を送らず B がいきなり ready を送っても固まらない
+    const rkA = ca.inbox.length, rkB = cb.inbox.length;
+    send(cb, { type: 'ready', ready: true });
+    const recPred = room => room.state === 'lobby'
+      && (room.players.find(p => p.nickname === 'テストB' + stamp) || {}).ready === true;
+    const roomRecA = await waitRoomWhere(ca, rkA, recPred);
+    await waitRoomWhere(cb, rkB, recPred);
+    const recPa = roomRecA.room.players.find(p => p.nickname === 'テストA' + stamp);
+    ok(recPa && recPa.ready === false, '復旧: finished で ready を送ると自動でロビーに戻り、本人だけ準備ON・他はリセット済み');
+    const ckA = ca.inbox.length, ckB = cb.inbox.length;
+    send(ca, { type: 'ready', ready: true });
+    await waitSince(ca, ckA, 'gateTiming');
+    await waitSince(cb, ckB, 'gateTiming');
+    send(ca, { type: 'gateInput', gateT: 0.8, boost: false });
+    send(cb, { type: 'gateInput', gateT: 0.8, boost: false });
+    await waitSince(ca, ckA, 'countdown');
+    await waitSince(cb, ckB, 'countdown');
+    ok(true, '復旧: 全員ready→タイミング合わせ→カウントダウンが始まる');
     ca.ws.close(); cb.ws.close();
+
+    console.log('— 僅差リプレイ判定（部屋レース・フェーズ34追加分） —');
+    // 判定関数 closeFinishOf はクライアント（public/index.html）の純粋関数。
+    // 実ファイルから抽出して単体確認し、部屋レースの実 standings でも検証する。
+    const htmlSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const grabFn = re => { const m = htmlSrc.match(re); if (!m) throw new Error('抽出失敗: ' + re); return m[0]; };
+    const closeFinishOf = new Function(
+      grabFn(/const CLOSE_GAP_SEC = [0-9.]+;/) + '\n'
+      + grabFn(/function marginTerm\(diffSec\) \{[\s\S]*?\n\}/) + '\n'
+      + grabFn(/function closeFinishOf\(standings\) \{[\s\S]*?\n\}/)
+      + '\nreturn closeFinishOf;')();
+    const mkStandings = (t1, t2) => [
+      { nickname: 'X', horseName: '馬X', time: t1 }, { nickname: 'Y', horseName: '馬Y', time: t2 },
+    ];
+    ok(closeFinishOf(mkStandings(100, 100.12)) !== null, '僅差判定: 着差0.12秒は発動');
+    ok(closeFinishOf(mkStandings(100, 100.13)) === null, '僅差判定: 着差0.13秒は発動しない');
+    ok(closeFinishOf(mkStandings(100, null)) === null, '僅差判定: 2着が未完走(time=null)は発動しない');
+
+    // 部屋レースで僅差を決定的に作る: 両者をゴール手前1190mまで進め、
+    // 最後の pos を同タイミングで送って 1・2着の着差を ≈0 にする。
+    const ca2 = await connect(a.token);
+    const cb2 = await connect(b.token);
+    await ca2.waitFor('welcome'); await cb2.waitFor('welcome');
+    send(ca2, { type: 'createRoom', distance: 1200 });
+    const closeRoom = await ca2.waitFor('room');
+    send(cb2, { type: 'joinRoom', code: closeRoom.room.code });
+    await cb2.waitFor('room');
+    const cmA = ca2.inbox.length, cmB = cb2.inbox.length;
+    send(ca2, { type: 'ready', ready: true });
+    send(cb2, { type: 'ready', ready: true });
+    await waitSince(ca2, cmA, 'gateTiming');
+    send(ca2, { type: 'gateInput', gateT: 0.8, boost: false });
+    send(cb2, { type: 'gateInput', gateT: 0.8, boost: false });
+    await waitSince(ca2, cmA, 'countdown');
+    await waitSince(ca2, cmA, 'raceStart');
+    await Promise.all([driveToFinish(ca2, 1190), driveToFinish(cb2, 1190)]);
+    await wait(300); // 両者の受理距離が 1190m に揃うのを待つ
+    send(ca2, { type: 'pos', dist: 1200, lane: 3, speed: 17 });
+    send(cb2, { type: 'pos', dist: 1200, lane: 3, speed: 17 });
+    const [rcA, rcB] = await Promise.all([
+      waitSince(ca2, cmA, 'results', 60000),
+      waitSince(cb2, cmB, 'results', 60000),
+    ]);
+    ok(!rcA.standings[0].npc && !rcA.standings[1].npc, '部屋僅差: 1・2着は両プレイヤー');
+    const closeGap = rcA.standings[1].time - rcA.standings[0].time;
+    ok(closeGap <= 0.12, `部屋僅差: 1-2着の着差 ${closeGap.toFixed(3)}秒 ≤ 0.12秒`);
+    const sig = r => r.standings.map(s => s.nickname + ':' + s.time).join('|');
+    ok(sig(rcA) === sig(rcB), '部屋僅差: 両クライアントの着順・タイムが完全一致（サーバー確定値）');
+    const ciA = closeFinishOf(rcA.standings), ciB = closeFinishOf(rcB.standings);
+    ok(!!ciA && !!ciB && ciA.gap === ciB.gap && ciA.term === ciB.term,
+      `部屋僅差: 両クライアントで僅差判定が一致し発動（${ciA ? ciA.term : '—'}）→ ボタン表示・自動再生の導線に乗る`);
+    ca2.ws.close(); cb2.ws.close();
+
+    console.log('— ゲートタイミング合わせ: タイムアウト自動確定（フェーズ35） —');
+    // Bが最後まで入力しなくても、制限時間（テスト環境では2.5秒）で
+    // 「ふつう（gateT 0.8）」として自動確定し、発走まで進むことを確認する。
+    const ca3 = await connect(a.token);
+    const cb3 = await connect(b.token);
+    await ca3.waitFor('welcome'); await cb3.waitFor('welcome');
+    send(ca3, { type: 'createRoom', distance: 1600 });
+    const tRoom = await ca3.waitFor('room');
+    send(cb3, { type: 'joinRoom', code: tRoom.room.code });
+    await cb3.waitFor('room');
+    const tmA = ca3.inbox.length, tmB = cb3.inbox.length;
+    send(ca3, { type: 'ready', ready: true });
+    send(cb3, { type: 'ready', ready: true });
+    const gt3 = await waitSince(ca3, tmA, 'gateTiming');
+    ok(gt3.timeoutSec === 2.5, 'タイムアウト: 制限時間（テスト環境2.5秒）が配信される');
+    send(ca3, { type: 'gateInput', gateT: 0, boost: true }); // Aだけ入力。Bは無入力のまま
+    const cdT = await waitSince(ca3, tmA, 'countdown', 15000);
+    await waitSince(cb3, tmB, 'countdown', 15000);
+    const gA3 = cdT.gate && cdT.gate['テストA' + stamp];
+    const gB3 = cdT.gate && cdT.gate['テストB' + stamp];
+    ok(gA3 && gA3.gateT === 0 && gA3.boost === true && gA3.auto === false,
+      'タイムアウト: 入力した本人の判定（パーフェクト＋ブースト）がそのまま確定');
+    ok(gB3 && gB3.gateT === 0.8 && gB3.boost === false && gB3.auto === true,
+      'タイムアウト: 未入力者は制限時間で「ふつう（0.8秒）」として自動確定');
+    await waitSince(ca3, tmA, 'raceStart', 10000);
+    ok(true, 'タイムアウト: 自動確定のあと発走する（部屋が止まらない）');
+    ca3.ws.close(); cb3.ws.close();
+
+    console.log('— ロビーでの距離変更（フェーズ35追加） —');
+    // 部屋を作った後でも、ロビーでホストが距離を変更できる。ゲストは変更不可。
+    // 変更すると全員の準備が未完了にリセットされ、変更後の距離で発走する。
+    const ca4 = await connect(a.token);
+    const cb4 = await connect(b.token);
+    await ca4.waitFor('welcome'); await cb4.waitFor('welcome');
+    send(ca4, { type: 'createRoom', distance: 2000 });
+    const dRoom = await ca4.waitFor('room');
+    ok(dRoom.room.owner === 'テストA' + stamp, '距離変更: 部屋作成者がホストとして配信される');
+    send(cb4, { type: 'joinRoom', code: dRoom.room.code });
+    await cb4.waitFor('room');
+    const dmB = cb4.inbox.length;
+    send(cb4, { type: 'setDistance', distance: 2400 }); // ゲストが変更を試みる
+    const guestErr = await waitSince(cb4, dmB, 'error', 5000);
+    ok(/ホストだけ/.test(guestErr.message || ''), '距離変更: ゲストの変更は拒否される');
+    const dmA = ca4.inbox.length, dmB2 = cb4.inbox.length;
+    send(ca4, { type: 'ready', ready: true }); // 先にホストが ready しておく
+    const roomReady = await waitRoomWhere(ca4, dmA, r => (r.players.find(p => p.nickname === 'テストA' + stamp) || {}).ready === true);
+    ok(roomReady.room.distance === 2000, '距離変更: 変更前は作成時の2000m');
+    send(ca4, { type: 'setDistance', distance: 1200 });
+    const roomDistA = await waitRoomWhere(ca4, dmA, r => r.distance === 1200);
+    const roomDistB = await waitRoomWhere(cb4, dmB2, r => r.distance === 1200);
+    ok(roomDistA.room.raceName === '疾風スプリント', '距離変更: レース名も新しい距離に追随する');
+    ok(roomDistB.room.distance === 1200, '距離変更: ゲストにも即時反映される');
+    ok(roomDistA.room.players.every(p => p.ready === false), '距離変更: 変更すると全員の準備が未完了にリセットされる');
+    const emA = ca4.inbox.length, emB = cb4.inbox.length;
+    send(ca4, { type: 'ready', ready: true });
+    send(cb4, { type: 'ready', ready: true });
+    await waitSince(ca4, emA, 'gateTiming');
+    send(ca4, { type: 'gateInput', gateT: 0.8, boost: false });
+    send(cb4, { type: 'gateInput', gateT: 0.8, boost: false });
+    const cdD = await waitSince(ca4, emA, 'countdown');
+    ok(cdD.meta && cdD.meta.distance === 1200, '距離変更: カウントダウンの距離が変更後の1200m');
+    await waitSince(ca4, emA, 'raceStart');
+    await Promise.all([driveToFinish(ca4, 1200), driveToFinish(cb4, 1200)]);
+    const rdA = await waitSince(ca4, emA, 'results', 90000);
+    await waitSince(cb4, emB, 'results', 90000);
+    ok(rdA.meta && rdA.meta.distance === 1200 && rdA.standings.length === 18, '距離変更: 変更後の1200mでレースが完走し結果が返る');
+    ca4.ws.close(); cb4.ws.close();
 
     console.log('— ソロモード フロー —');
     const s = await auth('テストS' + stamp, 'pass-s');
@@ -191,6 +400,7 @@ async function main() {
     await cs.waitFor('welcome');
     send(cs, { type: 'soloStart', horseId: s.profile.unlocked[0] });
     const rs = await raceToFinish(cs, 'ソロ', 'テストS' + stamp);
+    ok(!cs.inbox.some(m => m.type === 'gateTiming'), 'ソロ: タイミング合わせフェーズは挟まない（従来どおり即カウントダウン）');
     ok(rs.standings.length === 18, 'ソロ結果: 自分＋NPC17頭の着順表');
     ok(rs.standings.filter(x => !x.npc).length === 1, 'ソロ結果: 人間は1人だけ');
     cs.ws.close();
@@ -224,7 +434,11 @@ async function main() {
 
     const mis = await api('/api/missions', { token: a.token });
     ok(Array.isArray(mis.j.missions) && mis.j.missions.length === 6, 'ミッション: 6件返る');
-    const claimNg = await api('/api/missions/claim', { token: a.token, id: 'first_win' });
+    // 未達成の請求拒否は「一度もレースしていない新規プレイヤー」で確認する。
+    // Aは再戦フロー（フェーズ34）を含め複数レースを完走しており、勝敗次第で
+    // first_win を達成済みの可能性があるため（以前からAの勝利で揺れる項目だった）。
+    const fresh = await auth('未達成テスト' + stamp, 'pass-f');
+    const claimNg = await api('/api/missions/claim', { token: fresh.token, id: 'first_win' });
     ok(claimNg.status === 400, 'ミッション: 未達成の請求を拒否');
 
     const cw = await connect(a.token);
