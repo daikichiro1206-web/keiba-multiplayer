@@ -529,7 +529,12 @@ let roomState = null;
 // レース状態
 const TRACK_LEN = 2000; // 物理コース1周（ゴール固定）
 let RACE_DIST = 2000;   // 今回のレース距離（1200/1600/2000/2400）。2400は1周＋400m（スタートがゴール奥側）
-const physOff = () => TRACK_LEN - RACE_DIST; // レース座標→物理コース座標のオフセット
+/* 決勝線の物理位置（フェーズ33）: 最終コーナー出口（s=0）からホームストレートを
+   525m 進んだ点（東京競馬場の直線525m相当）。ゴール後の流しは直線残り 129.4m。
+   フェーズ31では決勝線が直線の始点にあり、コーナーを出てほぼ即ゴールだった。
+   サーバー側 FINISH_S と同値にすること */
+const FINISH_S = 525;
+const physOff = () => TRACK_LEN - RACE_DIST + FINISH_S; // レース座標→物理コース座標のオフセット（決勝線が s=FINISH_S に来る）
 /* ---------- フェーズ29: 空と太陽（ユーザー指定） ----------
    「夕方みたいなオレンジと水色がグラデーションしてる綺麗な空。でも全然昼寄り。
     太陽が1個あって、そっから日光が刺してる感じ」に応える作り替え。
@@ -1318,8 +1323,10 @@ $('btnBetStart').onclick = async () => {
    共通のコーナー係数）は元々「直線＋半径110m半円」なので、描画もそれに
    一致するスタジアム形状（直線2本＋半円コーナー2つ、1周2000m）に作り替え、
    形状関数だけを差し替えて弧長写像（coursePoint）自体は維持した。
-   決勝線（s=0）はホームストレートの始点に置き、物理のコーナー境界
-   （isCornerAt: 直線 654.5m → コーナー 345.6m → …）と幾何の区間が一致する。
+   決勝線はホームストレートを 525m 進んだ s=FINISH_S（フェーズ33で始点から
+   移動。最終コーナー出口→決勝線 525m／ゴール後の流し 129.4m）に置き、
+   物理のコーナー境界（isCornerAt: 直線 654.5m → コーナー 345.6m → …）と
+   幾何の区間が一致する。
    区間: [0, L) ホームストレート（x=+R、z: -HL→+HL、進行 +z）
          [L, L+ARC) 第1〜2コーナー（中心 (0,+HL)、半径 R）
          [L+ARC, 2L+ARC) 向正面（x=-R、進行 -z）
@@ -1330,6 +1337,7 @@ const ST_HL = ST_L / 2;                    // 直線の半分 327.21m
 const ST_ARC = Math.PI * ST_R;             // コーナー半周 345.58m
 const A = ST_R;                            // 決勝直線の x 座標（旧: 楕円半長軸。景観配置の基準として流用）
 const B = ST_HL + ST_R;                    // コースの z 半幅 437.21m（旧: 楕円半短軸）
+const FINISH_Z = -ST_HL + FINISH_S;       // 決勝線の z 座標 197.79（フェーズ33: 直線始点 -ST_HL から 525m 先）
 const LANE_W = 1.14;    // 1人用と同値: 1レーンの幅(m)
 const LAT_MAX = 9.7;    // 1人用と同値: 横位置の上限(m)。レーン換算で 8.5±8.5 → 0..17 に一致
 /* スタジアム中心線: 弧長 s → {x, z, dx, dz（進行方向）, nx, nz（外向き法線）} */
@@ -2323,8 +2331,9 @@ function buildVenueDressing() {
     return { x: p.x, z: p.z, tan: { x: p.dx, z: p.dz } };
   };
   // 残り距離標識（あと○m）: ゴールまで200mごと、外側のラチの外に設置（1人用と同じ）
+  // フェーズ33: 決勝線が s=FINISH_S へ移ったため、標識も決勝線から bd m 手前に置く
   for (let bd = 200; bd < TRACK_LEN; bd += 200) {
-    const p = onCourse(TRACK_LEN - bd, 16.0);
+    const p = onCourse(FINISH_S - bd, 16.0);
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.9, 6), std(0xdddddd, 0.6, 0.4));
     post.position.set(p.x, 0.95, p.z); post.castShadow = true; scene.add(post);
     const board = makeBoardMesh('あと' + bd + 'm', '#20401c', '#ffffff', true);
@@ -2333,7 +2342,10 @@ function buildVenueDressing() {
     scene.add(board);
   }
   // コーナー・区間標識（1人用と同じ文言・色）
-  [[1000, '第3コーナー'], [1450, '第4コーナー'], [1600, '最終直線']].forEach(([d, label]) => {
+  // フェーズ33: 旧配置（s=1000/1450/1600）は幾何の区間とずれていたため、名前どおりの
+  // 実際の入口へ移設: 第3コーナー=第3〜4コーナー入口、第4コーナー=その中点（第4の入口）、
+  // 最終直線=ホームストレート入口（最終コーナー出口 s=0）
+  [[ST_L * 2 + ST_ARC, '第3コーナー'], [ST_L * 2 + ST_ARC * 1.5, '第4コーナー'], [0, '最終直線']].forEach(([d, label]) => {
     const p = onCourse(d, 16.0);
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.2, 6), std(0xdddddd, 0.6, 0.4));
     post.position.set(p.x, 1.1, p.z); post.castShadow = true; scene.add(post);
@@ -2345,12 +2357,12 @@ function buildVenueDressing() {
   });
   // ゴール板: 外側の決勝ポスト（赤ポール＋金球）に「ゴール」板（1人用と同じ。内側ポストは既存）
   const oPost = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 5, 10), std(0xd8232a, 0.5));
-  oPost.position.set(A + 12.6, 2.5, -ST_HL); oPost.castShadow = true; scene.add(oPost);
+  oPost.position.set(A + 12.6, 2.5, FINISH_Z); oPost.castShadow = true; scene.add(oPost);
   const oBall = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 12), std(0xffc21c, 0.35, 0.3));
-  oBall.position.set(A + 12.6, 5.1, -ST_HL); oBall.castShadow = true; scene.add(oBall);
+  oBall.position.set(A + 12.6, 5.1, FINISH_Z); oBall.castShadow = true; scene.add(oBall);
   const goalBoard = makeBoardMesh('ゴール', '#b02020', '#ffffff', true);
   goalBoard.scale.set(1.55, 1.55, 1);
-  goalBoard.position.set(A + 12.6, 4.3, -ST_HL);
+  goalBoard.position.set(A + 12.6, 4.3, FINISH_Z);
   goalBoard.rotation.y = Math.PI; // 最終直線を向く
   scene.add(goalBoard);
   // 大型スクリーン（内馬場、メインスタンドと決勝線のほうを向く。1人用のLED看板を移植）
@@ -2390,8 +2402,8 @@ function buildVenueDressing() {
       const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 4, 8), std(0x555c66, 0.5, 0.5));
       leg.position.set(off, 2, 0); g.add(leg);
     });
-    g.position.set(A - 62, 0, -ST_HL + 62); // フェーズ31: 決勝線寄りの内馬場へ
-    g.rotation.y = Math.atan2((A + 25) - (A - 62), (-ST_HL + 40) - (-ST_HL + 62)); // スタンド正面を向く
+    g.position.set(A - 62, 0, FINISH_Z + 62); // フェーズ31: 決勝線寄りの内馬場へ（フェーズ33: 決勝線の移動に追随）
+    g.rotation.y = Math.atan2((A + 25) - (A - 62), (FINISH_Z + 40) - (FINISH_Z + 62)); // スタンド正面を向く
     scene.add(g);
   }
   // 向正面スタンド（メインスタンドの鏡像の簡易版: 段席＋観客＋横断幕＋屋根）
@@ -2534,13 +2546,13 @@ function buildVenueDressing() {
     // 両面とも表示面にする（裏側が黒い板に見えると安っぽいため、背中合わせ2面）
     [-0.36, 0.36].forEach(dx => {
       const bd = new THREE.Mesh(new THREE.PlaneGeometry(13, 8), new THREE.MeshBasicMaterial({ map: ct }));
-      bd.position.set(A - 42 + dx, 5.2, -ST_HL + 47); bd.rotation.y = dx > 0 ? Math.PI / 2 : -Math.PI / 2; scene.add(bd);
+      bd.position.set(A - 42 + dx, 5.2, FINISH_Z + 47); bd.rotation.y = dx > 0 ? Math.PI / 2 : -Math.PI / 2; scene.add(bd);
     });
     const frame = new THREE.Mesh(new THREE.BoxGeometry(0.6, 8.8, 13.8), std(0x23282e, 0.7));
-    frame.position.set(A - 42, 5.0, -ST_HL + 47); frame.castShadow = true; scene.add(frame);
+    frame.position.set(A - 42, 5.0, FINISH_Z + 47); frame.castShadow = true; scene.add(frame);
     [-4.5, 4.5].forEach(dz => {
       const post = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 5.2, 8), std(0x666666, 0.5, 0.5));
-      post.position.set(A - 42, 2.6, -ST_HL + 47 + dz); post.castShadow = true; scene.add(post);
+      post.position.set(A - 42, 2.6, FINISH_Z + 47 + dz); post.castShadow = true; scene.add(post);
     });
   }
   // 審判塔（決勝線の外側）: 白い塔体＋ガラス張りの審判室＋「審判」表示
@@ -2554,7 +2566,7 @@ function buildVenueDressing() {
     roof.position.y = 10.05; roof.castShadow = true; g.add(roof);
     const sign = makeBoardMesh('審判', '#20401c', '#ffffff', true);
     sign.position.set(-1.78, 8.75, 0); sign.rotation.y = -Math.PI / 2; g.add(sign);
-    g.position.set(A + 17.5, 0, -ST_HL + 14); // フェーズ31: 決勝線のすぐ外側
+    g.position.set(A + 17.5, 0, FINISH_Z + 14); // フェーズ31: 決勝線のすぐ外側（フェーズ33: 決勝線の移動に追随）
     scene.add(g);
   }
   // 旗ポール（内馬場・ホームストレート沿い）: 日の丸／場旗／白旗。旗は波形を
@@ -2693,13 +2705,13 @@ function initThree() {
   scene.add(buildRail(12.4));
   // 決勝線＋ゴールポスト（赤ポール＋金球、1人用と同色）
   const finishLine = new THREE.Mesh(new THREE.BoxGeometry(23.0, 0.012, 0.6), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }));
-  finishLine.position.set(A, 0.045, -ST_HL); scene.add(finishLine);
+  finishLine.position.set(A, 0.045, FINISH_Z); scene.add(finishLine);
   const post = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 5, 10), new THREE.MeshStandardMaterial({ color: 0xd8232a, roughness: 0.5 }));
-  post.position.set(A - 12.6, 2.5, -ST_HL); post.castShadow = true; scene.add(post);
+  post.position.set(A - 12.6, 2.5, FINISH_Z); post.castShadow = true; scene.add(post);
   const ball = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 12), new THREE.MeshStandardMaterial({ color: 0xffc21c, roughness: 0.35, metalness: 0.3 }));
-  ball.position.set(A - 12.6, 5.1, -ST_HL); ball.castShadow = true; scene.add(ball);
-  // メインスタンド（フェーズ31: 決勝線の少し先が正面に来るよう z を寄せる）
-  const gs = buildGrandstand(); gs.position.z = -ST_HL + 40; scene.add(gs);
+  ball.position.set(A - 12.6, 5.1, FINISH_Z); ball.castShadow = true; scene.add(ball);
+  // メインスタンド（フェーズ31: 決勝線の少し先が正面に来るよう z を寄せる。フェーズ33: 決勝線の移動に追随し正面を維持）
+  const gs = buildGrandstand(); gs.position.z = FINISH_Z + 40; scene.add(gs);
   buildVenueDressing();
   buildTreeLine();
   buildGate();
@@ -2805,12 +2817,17 @@ function applyRaceMeta(meta) {
   nextGrade = meta.grade || nextGrade;
   $('condTag').textContent = raceGoing.name; // 1人用と同じく「良馬場」等の表示名そのまま
   if (dirtMatRef) dirtMatRef.color.set(raceGoing.id === 'ju' ? 0x77603f : raceGoing.id === 'yaya' ? 0xa1845b : 0xb2966c); // 馬場別の色は1人用と同値（良の旧値 0xd8c6a2 は白すぎた）
-  // 距離バーの目印はレース距離に合わせて置き直す（1人用 setRaceDistance と同じ式）
+  // 距離バーの目印はレース距離に合わせて置き直す
+  // フェーズ33: 旧式（1人用由来）は実コースのコーナー入口とずれていたため、
+  // 第3コーナー入口／第4コーナー入口の「残り距離」（距離に依らない実測値）に合わせる。
+  // 第3入口は s=2L+ARC → ゴールまで (TRACK_LEN-(2L+ARC))+FINISH_S、第4入口はその半周先
   const d = RACE_DIST;
   const marks = document.querySelectorAll('#distTrack .dmk');
   const setMark = (el, frac) => { if (el) el.style.left = clamp(frac * 100, 0, 99) + '%'; };
-  setMark(marks[0], (d - (LAP_ARC + LAP_STRAIGHT)) / d);
-  setMark(marks[1], (d - (LAP_ARC / 2 + LAP_STRAIGHT)) / d);
+  const REM_C3 = (TRACK_LEN - (LAP_STRAIGHT * 2 + LAP_ARC)) + FINISH_S; // ≒870.4m
+  const REM_C4 = REM_C3 - LAP_ARC / 2;                                  // ≒697.6m
+  setMark(marks[0], (d - REM_C3) / d);
+  setMark(marks[1], (d - REM_C4) / d);
   setMark(marks[2], (d - 400) / d);
   positionGate();
 }
@@ -3001,7 +3018,8 @@ function buildTreeLine() {
   ];
   for (const row of rows) {
     for (let s = 0; s < TRACK_LEN; s += 7.2) { // フェーズ31: 弧長ベース（旧: 楕円角度 0.0225rad 刻み ≒ 同密度）
-      if (Math.min(s, TRACK_LEN - s) < 150) continue;            // メインスタンド裏（決勝線付近）は空ける
+      const dsFin = Math.abs(s - FINISH_S);                     // フェーズ33: 決勝線が s=FINISH_S へ移動
+      if (Math.min(dsFin, TRACK_LEN - dsFin) < 150) continue;     // メインスタンド裏（決勝線付近）は空ける
       if (Math.abs(s - (ST_L + ST_ARC + ST_HL)) < 140) continue; // 向正面スタンド裏も空ける
       const density = 0.65 + 0.35 * Math.sin(s * 0.0094 + 1.7) * Math.sin(s * 0.0157 + 0.4);
       if (rnd() > row.keep * density) continue;
@@ -4396,14 +4414,14 @@ const DEBUG_CAM = new URLSearchParams(location.search).get('cam'); // 検証用�
 function orbitCamera(dist) {
   // 検証用固定視点: 内馬場側から決勝直線・ゴール・メインスタンドを一望する。
   // スタート直後の集団（全頭＋騎手）とスタンドが同じ画角に入る。
-  if (DEBUG_CAM === 'stand') {        // メインスタンドの正面寄り（フェーズ31: 決勝線 z=-ST_HL 付近）
-    camera.position.set(30, 12, -ST_HL - 85); camera.lookAt(A + 15, 5, -ST_HL + 55);
+  if (DEBUG_CAM === 'stand') {        // メインスタンドの正面寄り（フェーズ33: 決勝線 z=FINISH_Z 付近）
+    camera.position.set(30, 12, FINISH_Z - 85); camera.lookAt(A + 15, 5, FINISH_Z + 55);
   } else if (DEBUG_CAM === 'sunset') { // フェーズ29検証用: 決勝直線の内側から太陽方向（方位56°・仰角約32°）を見る。太陽（高度35°）が画面中央付近に来て、円盤とグローをHUDに隠されず確認できる
     camera.position.set(A - 40, 3.2, -60); camera.lookAt(A + 8, 52, 12);
   } else if (DEBUG_CAM === 'back') {  // 向正面スタンド
     camera.position.set(-30, 14, 85); camera.lookAt(-(A + 15), 5, -15);
   } else if (DEBUG_CAM === 'gate') {  // ゲートの斜め前（2000mの発走地点＝決勝線）
-    camera.position.set(A - 38, 4.5, -ST_HL + 34); camera.lookAt(A + 3, 1.8, -ST_HL - 2);
+    camera.position.set(A - 38, 4.5, FINISH_Z + 34); camera.lookAt(A + 3, 1.8, FINISH_Z - 2);
   } else if (DEBUG_CAM === 'trees') { // 内馬場から向正面の外側（地平線帯）を見る
     camera.position.set(40, 5.5, 26); camera.lookAt(40, 7, -(B + 160));
   } else if (DEBUG_CAM === 'trees2') { // コース際から外周方向（近い樹木と地平線）
@@ -4412,8 +4430,8 @@ function orbitCamera(dist) {
     if (scene && scene.fog) scene.fog = null;
     camera.position.set(0, 1450, 0.01); camera.lookAt(0, 0, 0);
   } else {
-    camera.position.set(A - 52, 9, -ST_HL + 66);
-    camera.lookAt(A + 6, 1.6, -ST_HL - 4);
+    camera.position.set(A - 52, 9, FINISH_Z + 66);
+    camera.lookAt(A + 6, 1.6, FINISH_Z - 4);
   }
   const p = trackPoint(dist, latToLane(myLat));
   if (sunLight) {
