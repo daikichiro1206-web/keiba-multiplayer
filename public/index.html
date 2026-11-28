@@ -682,6 +682,113 @@ function sfx(name) {
   else if (name === 'cheer') noiseHit(1.4, 'bandpass', 900, 0.6, 0.4, 0, 0.25);
   else if (name === 'whip') { tone(1200, 0, 0.06, 'sawtooth', 0.16); tone(900, 0.06, 0.06, 'sawtooth', 0.12); }
 }
+/* ---------- 観客の歓声（フェーズ30: ゴール前に向けて盛り上がる継続音） ----------
+   従来のゴール歓声 sfx('cheer') は1回だけの短いノイズだった。これを置き換え、
+   レース中ずっと流れる「ざわめき→直線で増大→ゴールでピーク→余韻」の
+   継続歓声にする。生成は全て Web Audio 合成（音声ファイルなし）で、ノードは
+   ノイズ源2つ＋フィルタ2つ＋ゲイン2つの最小構成。レース外では確実に止める。
+   レイヤー1 = 地のざわめき（ローパス、低め・太い）、レイヤー2 = 歓声の芯
+   （バンドパス、盛り上がりでだけ前に出る）。両方とも masterGain 経由なので
+   音量設定・ミュート（masterGain=0）にそのまま従う。 */
+let crowd = null; // { srcM, gM, srcC, fC, gC, timer, level, target, goalAt, pulseAt }
+let crowdNoiseBuf = null; // 2秒のホワイトノイズ（両レイヤーで共有、生成は1回だけ）
+function crowdTargetLevel(s, goalAgo) {
+  // 純関数: レース状況 → 歓声レベル 0..1（検証用に __km.crowdTargetOf で公開）
+  // s: { remain(先頭の残りm), gapTop(1-2位の差m), focusRank, focusGap } / goalAgo: 先頭ゴール後の秒数（未ゴールは null）
+  if (goalAgo != null) {
+    if (goalAgo >= 5.5) return 0;
+    if (goalAgo < 1.6) return 1 - 0.18 * (goalAgo / 1.6); // ピーク 1.0 → 0.82
+    return 0.82 * (1 - (goalAgo - 1.6) / 3.9);            // 余韻を残して収まる
+  }
+  if (!s) return 0;
+  const home = clamp((520 - s.remain) / 520, 0, 1);       // 最終コーナー→直線で 0→1
+  const close = clamp(1 - s.gapTop / 30, 0, 1);           // 先頭争いの接戦度（30m差で0）
+  let lv = 0.06 + 0.08 * clamp(1 - s.remain / 900, 0, 1)  // 序盤は小さなざわめき、進むほど微増
+    + home * home * (0.22 + 0.48 * close);                // 直線: 接戦なほど大きく
+  if (s.focusRank >= 1 && s.focusRank <= 3) lv += home * 0.16;          // 自分/賭けた馬が上位争い
+  else if (s.focusGap != null && s.focusGap < 20) lv += home * 0.10 * (1 - s.focusGap / 20);
+  return clamp(lv, 0, 1);
+}
+function crowdScene() {
+  // 現在のレース状況を crowdTargetLevel の入力形にまとめる（騎手=自分、観戦=賭けた馬 or 先頭）
+  let d1 = -1, d2 = -1;
+  runners.forEach((r, nick) => {
+    const d = (!watchMode && nick === myName) ? myDist : r.dist;
+    if (d > d1) { d2 = d1; d1 = d; } else if (d > d2) d2 = d;
+  });
+  if (d1 < 0) return null;
+  const gapTop = d1 - Math.max(0, d2);
+  if (watchMode) {
+    let fNick = null;
+    if (betState && betState.picks && betState.picks.length) {
+      const e = [...runners.entries()].find(([, r]) => betState.picks.includes(r.horseName));
+      if (e) fNick = e[0];
+    }
+    if (!fNick) return { remain: RACE_DIST - d1, gapTop, focusRank: 1, focusGap: 0 };
+    const fd = runners.get(fNick) ? runners.get(fNick).dist : 0;
+    let rk = 1; runners.forEach(r => { if (r.dist > fd) rk++; });
+    return { remain: RACE_DIST - d1, gapTop, focusRank: rk, focusGap: d1 - fd };
+  }
+  return { remain: RACE_DIST - d1, gapTop, focusRank: myRank, focusGap: d1 - myDist };
+}
+function crowdStart() {
+  crowdStop();
+  ensureAudio(); if (!audioCtx || !masterGain) return;
+  if (!crowdNoiseBuf) {
+    const len = audioCtx.sampleRate * 2;
+    crowdNoiseBuf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+    const d = crowdNoiseBuf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < len; i++) { const w = Math.random() * 2 - 1; last = (last + 0.03 * w) / 1.03; d[i] = (w * 0.5 + last * 2.2) * 0.7; } // 白＋茶色みで「人のざわめき」の太さに
+  }
+  const mk = (type, freq, q, rate) => {
+    const src = audioCtx.createBufferSource(); src.buffer = crowdNoiseBuf; src.loop = true; src.playbackRate.value = rate;
+    const f = audioCtx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+    const g = audioCtx.createGain(); g.gain.value = 0;
+    src.connect(f); f.connect(g); g.connect(masterGain); src.start();
+    return { src, f, g };
+  };
+  const m = mk('lowpass', 430, 0.4, 0.5);   // ざわめき層
+  const c = mk('bandpass', 850, 0.45, 1.0); // 歓声の芯層
+  crowd = { srcM: m.src, gM: m.g, srcC: c.src, fC: c.f, gC: c.g, timer: 0, level: 0, target: 0, goalAt: null, pulseAt: null };
+  crowd.timer = setInterval(crowdTick, 100);
+  crowdTick();
+}
+function crowdStop() {
+  if (!crowd) return;
+  clearInterval(crowd.timer);
+  try { crowd.srcM.stop(); crowd.srcC.stop(); } catch { /* 停止済み */ }
+  try { crowd.srcM.disconnect(); crowd.srcC.disconnect(); crowd.gM.disconnect(); crowd.gC.disconnect(); } catch { /* 同上 */ }
+  crowd = null;
+}
+function crowdPulse() {
+  // 自分/対象の馬がゴールした瞬間のピーク（旧 sfx('cheer') の置き換え先）
+  if (crowd) crowd.pulseAt = performance.now();
+  else sfx('cheer'); // 歓声が動いていない文脈（僅差リプレイのフリーズ等）では従来の単発歓声
+}
+function crowdTick() {
+  if (!crowd || !audioCtx) return;
+  const now = performance.now();
+  if (finishTimes.size && crowd.goalAt == null) crowd.goalAt = now; // 先頭ゴール検知
+  const goalAgo = crowd.goalAt != null ? (now - crowd.goalAt) / 1000 : null;
+  let target = 0;
+  if (racing) { const s = crowdScene(); target = crowdTargetLevel(s, goalAgo); }
+  else if (goalAgo != null) target = crowdTargetLevel(null, goalAgo);
+  if (crowd.pulseAt != null) { // ゴールパルス: 0.95 から約2.2秒で消える山
+    const pa = (now - crowd.pulseAt) / 1000;
+    if (pa < 2.2) target = Math.max(target, 0.05 + 0.9 * (1 - pa / 2.2));
+    else crowd.pulseAt = null;
+  }
+  crowd.target = target; crowd.level = target;
+  // 微かなうねり（人の声の不規則さ）と、芯層フィルタのゆらぎで単調さを消す
+  const fl = 1 + 0.06 * Math.sin(now * 0.0013) + 0.04 * Math.sin(now * 0.0047);
+  const t = audioCtx.currentTime;
+  crowd.gM.gain.setTargetAtTime(Math.pow(target, 1.25) * 0.34 * fl, t, 0.35);
+  crowd.gC.gain.setTargetAtTime(Math.pow(Math.max(0, target - 0.35) / 0.65, 1.6) * 0.5 * fl, t, 0.25);
+  crowd.fC.frequency.setTargetAtTime(800 + 140 * Math.sin(now * 0.0006) + target * 120, t, 0.4);
+  // レース外で余韻が終わったら自動停止（中断時は即停止）
+  if (!racing && (goalAgo == null || (goalAgo > 6 && target <= 0))) crowdStop();
+}
 document.addEventListener('click', e => { if (e.target.closest('button')) sfx('click'); });
 function refreshSoundBtn() { $('btnSound').textContent = sndMute ? '🔇' : '🔊'; }
 $('btnSound').onclick = () => { sndMute = !sndMute; localStorage.setItem('km_mute', sndMute ? '1' : '0'); applyVol(); refreshSoundBtn(); };
@@ -761,7 +868,7 @@ function connectWs() {
     else if (m.type === 'raceStart') { beginRace(m.field, m.meta); }
     else if (m.type === 'state') { applyState(m.runners); }
     else if (m.type === 'runnerFinished') { finishTimes.set(m.nickname, m.t); }
-    else if (m.type === 'watchAborted') { racing = false; refreshProfile().then(() => showHome()); }
+    else if (m.type === 'watchAborted') { racing = false; crowdStop(); refreshProfile().then(() => showHome()); }
     else if (m.type === 'results') { showResults(m); }
   };
   ws.onclose = () => { setTimeout(() => { if (token) connectWs(); }, 3000); }; // 最低限の再接続
@@ -901,6 +1008,9 @@ $('pkUnlock').onclick = async () => {
 
 /* ---------- プレビュー（小さな3Dビューア、選択馬が騎手つきで回転） ---------- */
 let pvRenderer = null, pvScene = null, pvCamera = null, pvGroup = null, pvMesh = null, pvLast = 0;
+let pvGroundTex = null, pvPhase = 0; // フェーズ30: 地面スクロールと歩様位相
+const PV_SPD = 13;                   // フェーズ30: プレビューの見た目の走行速度(m/s)。脚の滑りが出ないよう歩様・地面をこの速度に同期
+const PV_TILE = 6;                   // 地面テクスチャ1タイルの実寸(m)
 function initPreview() {
   if (pvRenderer) { updatePreviewHorse(); return; }
   const canvas = $('previewCanvas');
@@ -912,13 +1022,17 @@ function initPreview() {
   pvScene = new THREE.Scene();
   pvScene.background = new THREE.Color(0x9fcdf0); // フェーズ29: レース側の空の中間色に合わせる
   pvCamera = new THREE.PerspectiveCamera(45, (canvas.clientWidth || 640) / 220, 0.1, 100);
-  pvCamera.position.set(3.0, 1.8, 3.4);
+  pvCamera.position.set(0.6, 1.7, 4.6);
   pvCamera.lookAt(0, 1.0, 0);
-  const ground = new THREE.Mesh(new THREE.CircleGeometry(7, 32), new THREE.MeshStandardMaterial({ color: 0x74905c, roughness: 1 }));
+  // フェーズ30: 地面は芝テクスチャを流して「その場で走っている」感を出す
+  pvGroundTex = grassTexture(6, 6);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(36, 36), new THREE.MeshStandardMaterial({ map: pvGroundTex, color: 0xdfe4d2, roughness: 1 }));
   ground.rotation.x = -Math.PI / 2; pvScene.add(ground);
   pvScene.add(new THREE.HemisphereLight(0xcfe2ee, 0x54604a, 0.75)); // 1人用プレビューと同値
   const sun = new THREE.DirectionalLight(0xffd9a3, 1.9); sun.position.copy(SUN_DIR).multiplyScalar(8); pvScene.add(sun); // フェーズ29: レース側の太陽（SUN_DIR・暖色）に方向と色を合わせる
-  pvGroup = new THREE.Group(); pvScene.add(pvGroup);
+  pvGroup = new THREE.Group();
+  pvGroup.rotation.y = Math.PI / 2; // 馬の進行方向（モデル +z）を画面右（+x）へ向け、横からギャロップを見せる
+  pvScene.add(pvGroup);
   pvLast = performance.now();
   requestAnimationFrame(pvLoop);
   updatePreviewHorse();
@@ -931,14 +1045,36 @@ function updatePreviewHorse() {
     const def = horses.find(h => h.id === selectedHorseId);
     pvMesh = makeModelHorse(selectedHorseId, (def && def.num) || 1);
     pvGroup.add(pvMesh);
+    setHorseAnim(pvMesh, 'Gallop', 0.25); // フェーズ30: 立ち姿ではなくギャロップで表示
   });
 }
 function pvLoop(now) {
   requestAnimationFrame(pvLoop);
   if (!pvRenderer || $('horsePicker').classList.contains('hidden')) return;
   const dt = Math.min(0.05, (now - pvLast) / 1000); pvLast = now;
-  if (pvGroup) pvGroup.rotation.y += dt * 0.7;
-  if (pvMesh && pvMesh.userData.anim) pvMesh.userData.anim.mixer.update(dt);
+  // フェーズ30: 回転プレビューをやめ、その場ギャロップ＋地面スクロールに変更。
+  // 歩様位相・ミキサー速度・地面の流れをすべて PV_SPD に同期させ、脚が滑らないようにする
+  // （位相とミキサーの進め方はレース側 updateMeshes と同一式）。
+  pvPhase += dt * PV_SPD / strideLenOf(PV_SPD) * Math.PI * 2;
+  if (pvGroundTex) pvGroundTex.offset.x += PV_SPD * dt / PV_TILE; // 地面は進行方向と逆へ流れる
+  if (pvMesh && pvMesh.userData.anim) {
+    const sf = clamp(PV_SPD / 17, 0, 1.15);
+    pvMesh.userData.anim.mixer.update(dt * (0.12 + sf * 1.05));
+    const vis = pvMesh.userData.vis;
+    if (vis) {
+      // 騎手・胴体の揺れを歩様位相に同期（レース側と同一の式・定数）
+      const susp = Math.pow(Math.max(0, Math.sin(pvPhase - 0.55)), 2);
+      if (vis.bodyG) {
+        vis.bodyG.position.y = susp * 0.085 * sf - Math.pow(Math.max(0, Math.sin(pvPhase + 2.2)), 2) * 0.03 * sf;
+        vis.bodyG.rotation.x = -Math.sin(pvPhase - 0.35) * 0.045 * sf;
+        vis.bodyG.rotation.z = Math.sin(pvPhase) * 0.012 * sf;
+      }
+      vis.jock.rotation.x = clamp((PV_SPD - 12) / 6, 0, 1) * 0.85 * 0.16 + Math.sin(pvPhase - 0.9) * 0.02 * sf;
+      vis.jock.position.y = 1.66 + susp * 0.05 * sf + Math.abs(Math.sin(pvPhase)) * 0.02;
+      vis.jock.position.z = 0.08;
+      vis.updateBridle();
+    }
+  }
   pvRenderer.render(pvScene, pvCamera);
 }
 
@@ -1150,48 +1286,65 @@ $('btnBetStart').onclick = async () => {
    1人用は pointAt が真の弧長写像で、コース周長そのものが 2000 units =
    スケール厳密 1.000。これに合わせ、楕円を周長 2000 units に拡大し、
    写像も角度ではなく弧長ベースに変えた（局所スケールも全周 1.000）。 */
-function ellipseCircumference(a, b) {
-  let c = 0, px = a, pz = 0; const n = 720;
-  for (let i = 1; i <= n; i++) { const t = i / n * Math.PI * 2, x = Math.cos(t) * a, z = Math.sin(t) * b; c += Math.hypot(x - px, z - pz); px = x; pz = z; }
-  return c;
-}
-const WORLD_K = TRACK_LEN / ellipseCircumference(190, 120); // ≈2.028
-const A = 190 * WORLD_K, B = 120 * WORLD_K; // 楕円トラック半軸（周長 = TRACK_LEN になるよう拡大）
+/* ---------- コース形状（フェーズ31: 楕円 → スタジアム形状） ----------
+   旧描画コースは楕円で、本当の直線区間が無く常に緩く曲がり続けたため
+   「最後の直線が直線に感じない」という指摘を受けた。物理モデル（1人用と
+   共通のコーナー係数）は元々「直線＋半径110m半円」なので、描画もそれに
+   一致するスタジアム形状（直線2本＋半円コーナー2つ、1周2000m）に作り替え、
+   形状関数だけを差し替えて弧長写像（coursePoint）自体は維持した。
+   決勝線（s=0）はホームストレートの始点に置き、物理のコーナー境界
+   （isCornerAt: 直線 654.5m → コーナー 345.6m → …）と幾何の区間が一致する。
+   区間: [0, L) ホームストレート（x=+R、z: -HL→+HL、進行 +z）
+         [L, L+ARC) 第1〜2コーナー（中心 (0,+HL)、半径 R）
+         [L+ARC, 2L+ARC) 向正面（x=-R、進行 -z）
+         [2L+ARC, 2000) 第3〜4コーナー（中心 (0,-HL)、半径 R） */
+const ST_R = 110;                          // コーナー半径（物理モデルと同一）
+const ST_L = 1000 - Math.PI * ST_R;        // 直線長 654.42m（2L + 2πR = 2000 ちょうど）
+const ST_HL = ST_L / 2;                    // 直線の半分 327.21m
+const ST_ARC = Math.PI * ST_R;             // コーナー半周 345.58m
+const A = ST_R;                            // 決勝直線の x 座標（旧: 楕円半長軸。景観配置の基準として流用）
+const B = ST_HL + ST_R;                    // コースの z 半幅 437.21m（旧: 楕円半短軸）
 const LANE_W = 1.14;    // 1人用と同値: 1レーンの幅(m)
 const LAT_MAX = 9.7;    // 1人用と同値: 横位置の上限(m)。レーン換算で 8.5±8.5 → 0..17 に一致
-/* 弧長ルックアップ: パラメータ角 t → 累積弧長。dist（物理m）から t を引く
-   ことで、1人用 pointAt と同じ「距離に比例した」写像になる */
-const ARC_N = 4096, arcCum = new Float64Array(ARC_N + 1);
-{
-  let px = A, pz = 0, acc = 0;
-  for (let i = 1; i <= ARC_N; i++) {
-    const t = i / ARC_N * Math.PI * 2, x = Math.cos(t) * A, z = Math.sin(t) * B;
-    acc += Math.hypot(x - px, z - pz); px = x; pz = z; arcCum[i] = acc;
+/* スタジアム中心線: 弧長 s → {x, z, dx, dz（進行方向）, nx, nz（外向き法線）} */
+function stadiumPoint(s, out) {
+  s = ((s % TRACK_LEN) + TRACK_LEN) % TRACK_LEN;
+  if (s < ST_L) { out.x = ST_R; out.z = -ST_HL + s; out.dx = 0; out.dz = 1; out.nx = 1; out.nz = 0; }
+  else if (s < ST_L + ST_ARC) {
+    const th = (s - ST_L) / ST_R;
+    out.x = ST_R * Math.cos(th); out.z = ST_HL + ST_R * Math.sin(th);
+    out.dx = -Math.sin(th); out.dz = Math.cos(th); out.nx = Math.cos(th); out.nz = Math.sin(th);
+  } else if (s < ST_L * 2 + ST_ARC) {
+    const u = s - ST_L - ST_ARC;
+    out.x = -ST_R; out.z = ST_HL - u; out.dx = 0; out.dz = -1; out.nx = -1; out.nz = 0;
+  } else {
+    const th = Math.PI + (s - ST_L * 2 - ST_ARC) / ST_R;
+    out.x = ST_R * Math.cos(th); out.z = -ST_HL + ST_R * Math.sin(th);
+    out.dx = -Math.sin(th); out.dz = Math.cos(th); out.nx = Math.cos(th); out.nz = Math.sin(th);
   }
+  return out;
 }
-const ARC_TOTAL = arcCum[ARC_N];
-function tFromArc(s) {
-  const target = (((s % TRACK_LEN) + TRACK_LEN) % TRACK_LEN) / TRACK_LEN * ARC_TOTAL;
-  let lo = 0, hi = ARC_N;
-  while (lo < hi) { const mid = (lo + hi) >> 1; if (arcCum[mid] < target) lo = mid + 1; else hi = mid; }
-  const i = Math.max(1, lo), s0 = arcCum[i - 1], s1 = arcCum[i];
-  const f = s1 > s0 ? (target - s0) / (s1 - s0) : 0;
-  return (i - 1 + f) / ARC_N * Math.PI * 2;
-}
+const _sp = { x: 0, z: 0, dx: 0, dz: 0, nx: 0, nz: 0 };
 /* 物理距離（コース座標）＋法線オフセット → ワールド位置と向き。
    位置はコース描画（リボン/ラチ）と同一の法線オフセットで求める
    （1人用 worldPos が接線の法線方向へ正確に lat だけずらす方式と同じ）。 */
 function coursePoint(physDist, rOff) {
-  const t = tFromArc(physDist);
-  const c = ellipsePoint(t), n = ellipseNormal(t);
-  const x = c.x + n.x * rOff, z = c.z + n.z * rOff;
-  const t2 = t + 0.002, c2 = ellipsePoint(t2), n2 = ellipseNormal(t2);
-  let dx = (c2.x + n2.x * rOff) - x, dz = (c2.z + n2.z * rOff) - z;
-  const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
-  return { x, z, dx, dz, t };
+  const p = stadiumPoint(physDist, _sp);
+  return { x: p.x + p.nx * rOff, z: p.z + p.nz * rOff, dx: p.dx, dz: p.dz, t: (((physDist % TRACK_LEN) + TRACK_LEN) % TRACK_LEN) / TRACK_LEN * Math.PI * 2 };
 }
 function trackPoint(dist, lane) {
   return coursePoint(dist + physOff(), (lane - 8.5) * LANE_W);
+}
+/* フェーズ30: 毎フレームのホットパス用に、結果を既存オブジェクトへ書き込む
+   無割り当て版（coursePoint と同一の計算）。updateMeshes では18頭×最大3回呼ばれる。 */
+function coursePointInto(physDist, rOff, out) {
+  const p = stadiumPoint(physDist, _sp);
+  out.x = p.x + p.nx * rOff; out.z = p.z + p.nz * rOff; out.dx = p.dx; out.dz = p.dz;
+  out.t = (((physDist % TRACK_LEN) + TRACK_LEN) % TRACK_LEN) / TRACK_LEN * Math.PI * 2;
+  return out;
+}
+function trackPointInto(dist, lane, out) {
+  return coursePointInto(dist + physOff(), (lane - 8.5) * LANE_W, out);
 }
 /* 横位置の符号規約（1人用 keiba-engine.js と完全一致させる）:
    クライアント内の lat は「+ = 一人称画面の右」。1人用では横オフセット
@@ -2039,21 +2192,17 @@ function glowTexture() { // 昼間の淡いハロー用ラジアルグラデー�
   _glowTexCache = new THREE.CanvasTexture(c);
   return _glowTexCache;
 }
-function ellipsePoint(t) { return { x: Math.cos(t) * A, z: Math.sin(t) * B }; }
-function ellipseNormal(t) {
-  const nx = Math.cos(t) / A, nz = Math.sin(t) / B, l = Math.hypot(nx, nz);
-  return { x: nx / l, z: nz / l };
-}
-/* コース中心線から offset した位置に幅 width の帯を敷く */
+/* コース中心線から offset した位置に幅 width の帯を敷く（フェーズ31: 弧長サンプリングに統一） */
 function ribbon(offset, width, y, mat, uvScale = 9) {
-  const seg = 400, pos = [], uv = [], idx = []; // フェーズ19: 周長2000に合わせ 5m/segment（1人用 ribbonOff の step と同等）
+  const seg = 400, pos = [], uv = [], idx = []; // 周長2000に合わせ 5m/segment（1人用 ribbonOff の step と同等）
   let acc = 0, prev = null;
   for (let i = 0; i <= seg; i++) {
-    const t = i / seg * Math.PI * 2, c = ellipsePoint(t), n = ellipseNormal(t);
-    const ox = c.x + n.x * offset, oz = c.z + n.z * offset;
-    if (prev) acc += Math.hypot(ox - prev.x, oz - prev.z);
-    prev = { x: ox, z: oz };
-    pos.push(ox - n.x * width / 2, y, oz - n.z * width / 2, ox + n.x * width / 2, y, oz + n.z * width / 2);
+    const s = i / seg * TRACK_LEN;
+    const c = coursePoint(s, offset);
+    const p1 = coursePoint(s, offset - width / 2), p2 = coursePoint(s, offset + width / 2);
+    if (prev) acc += Math.hypot(c.x - prev.x, c.z - prev.z);
+    prev = c;
+    pos.push(p1.x, y, p1.z, p2.x, y, p2.z);
     uv.push(acc / uvScale, 0, acc / uvScale, 1);
     if (i < seg) { const a = i * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
   }
@@ -2068,8 +2217,8 @@ function ribbon(offset, width, y, mat, uvScale = 9) {
 class OffsetCurve extends THREE.Curve {
   constructor(offset, y) { super(); this.offset = offset; this.y = y; }
   getPoint(t, target = new THREE.Vector3()) {
-    const a = t * Math.PI * 2, c = ellipsePoint(a), n = ellipseNormal(a);
-    return target.set(c.x + n.x * this.offset, this.y, c.z + n.z * this.offset);
+    const p = coursePoint(t * TRACK_LEN, this.offset); // フェーズ31: 弧長写像（旧: 楕円角度写像）
+    return target.set(p.x, this.y, p.z);
   }
 }
 function buildRail(offset) {
@@ -2142,11 +2291,7 @@ function buildGrandstand() {
 /* ---------- 競馬場の装飾（1人用の景観要素を移植: 標識・ゴール板・大型スクリーン・向正面スタンド・照明塔） ---------- */
 function buildVenueDressing() {
   const std = (c, r = 0.85, m = 0) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m });
-  const tangentAt = t => {
-    const a = ellipsePoint(t), b = ellipsePoint(t + 0.002);
-    const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1;
-    return { x: dx / l, z: dz / l };
-  };
+  const tangentAt = s => { const p = coursePoint(s, 0); return { x: p.dx, z: p.dz }; }; // フェーズ31: 弧長ベース
   const onCourse = (physDist, off) => {
     const p = coursePoint(physDist, off); // 弧長写像（trackPoint と同一。旧: 角度写像で標識位置が圧縮されていた）
     return { x: p.x, z: p.z, tan: { x: p.dx, z: p.dz } };
@@ -2174,12 +2319,12 @@ function buildVenueDressing() {
   });
   // ゴール板: 外側の決勝ポスト（赤ポール＋金球）に「ゴール」板（1人用と同じ。内側ポストは既存）
   const oPost = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 5, 10), std(0xd8232a, 0.5));
-  oPost.position.set(A + 12.6, 2.5, 0); oPost.castShadow = true; scene.add(oPost);
+  oPost.position.set(A + 12.6, 2.5, -ST_HL); oPost.castShadow = true; scene.add(oPost);
   const oBall = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 12), std(0xffc21c, 0.35, 0.3));
-  oBall.position.set(A + 12.6, 5.1, 0); oBall.castShadow = true; scene.add(oBall);
+  oBall.position.set(A + 12.6, 5.1, -ST_HL); oBall.castShadow = true; scene.add(oBall);
   const goalBoard = makeBoardMesh('ゴール', '#b02020', '#ffffff', true);
   goalBoard.scale.set(1.55, 1.55, 1);
-  goalBoard.position.set(A + 12.6, 4.3, 0);
+  goalBoard.position.set(A + 12.6, 4.3, -ST_HL);
   goalBoard.rotation.y = Math.PI; // 最終直線を向く
   scene.add(goalBoard);
   // 大型スクリーン（内馬場、メインスタンドと決勝線のほうを向く。1人用のLED看板を移植）
@@ -2219,8 +2364,8 @@ function buildVenueDressing() {
       const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 4, 8), std(0x555c66, 0.5, 0.5));
       leg.position.set(off, 2, 0); g.add(leg);
     });
-    g.position.set(A - 62, 0, 62);
-    g.rotation.y = Math.atan2((A + 25) - (A - 62), 0 - 62); // スタンド正面を向く
+    g.position.set(A - 62, 0, -ST_HL + 62); // フェーズ31: 決勝線寄りの内馬場へ
+    g.rotation.y = Math.atan2((A + 25) - (A - 62), (-ST_HL + 40) - (-ST_HL + 62)); // スタンド正面を向く
     scene.add(g);
   }
   // 向正面スタンド（メインスタンドの鏡像の簡易版: 段席＋観客＋横断幕＋屋根）
@@ -2294,9 +2439,9 @@ function buildVenueDressing() {
     const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 1); t.colorSpace = THREE.SRGBColorSpace;
     return t;
   })();
-  const atAngle = (ang, off) => { // 楕円パラメータ角＋法線オフセットで配置を決める
-    const c = ellipsePoint(ang), n = ellipseNormal(ang);
-    return { x: c.x + n.x * off, z: c.z + n.z * off, rotY: Math.atan2(tangentAt(ang).x, tangentAt(ang).z) };
+  const atAngle = (s, off) => { // フェーズ31: 弧長 s＋法線オフセットで配置を決める（旧: 楕円パラメータ角）
+    const p = coursePoint(s, off);
+    return { x: p.x, z: p.z, rotY: Math.atan2(p.dx, p.dz) };
   };
   // 内馬場の池（1人用を移植: 空の映る水面テクスチャ＋縁石）
   {
@@ -2330,13 +2475,13 @@ function buildVenueDressing() {
     };
     const flowerMats = [0xc25a74, 0xd9a83c, 0xd07a3a, 0xe3ded2].map(flowerMat);
     let bi = 0;
-    for (let ang = -0.62; ang <= 0.62; ang += 0.078) { // ホームストレート内側（フェーズ19: コース拡大に合わせ角度刻みを半分にし、m単位の密度を維持）
-      const p = atAngle(ang, -17.5);
+    for (let s = 30; s <= 620; s += 22) { // ホームストレート内側（フェーズ31: 弧長ベース）
+      const p = atAngle(s, -17.5);
       const bed = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.22, 17), flowerMats[bi++ % 4]);
       bed.position.set(p.x, 0.11, p.z); bed.rotation.y = p.rotY; bed.receiveShadow = true; scene.add(bed);
     }
-    for (let ang = Math.PI - 0.55; ang <= Math.PI + 0.55; ang += 0.08) { // 向正面内側
-      const p = atAngle(ang, -17.5);
+    for (let s = ST_L + ST_ARC + 30; s <= ST_L * 2 + ST_ARC - 30; s += 25) { // 向正面内側
+      const p = atAngle(s, -17.5);
       const bed = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.22, 17), flowerMats[bi++ % 4]);
       bed.position.set(p.x, 0.11, p.z); bed.rotation.y = p.rotY; bed.receiveShadow = true; scene.add(bed);
     }
@@ -2344,8 +2489,8 @@ function buildVenueDressing() {
   // 生垣（ホームストレート外側、ラチとスタンドの間。1人用 hedges を移植）
   {
     const hedgeM = new THREE.MeshStandardMaterial({ color: 0x39663a, map: leafTex15, roughness: 1 });
-    for (let ang = -0.78; ang <= 0.78; ang += 0.065) {
-      const p = atAngle(ang, 16.6);
+    for (let s = 30; s <= 630; s += 20) { // フェーズ31: 弧長ベース
+      const p = atAngle(s, 16.6);
       const hedge = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.1, 19), hedgeM);
       hedge.position.set(p.x, 0.55, p.z); hedge.rotation.y = p.rotY; hedge.castShadow = true; scene.add(hedge);
     }
@@ -2363,13 +2508,13 @@ function buildVenueDressing() {
     // 両面とも表示面にする（裏側が黒い板に見えると安っぽいため、背中合わせ2面）
     [-0.36, 0.36].forEach(dx => {
       const bd = new THREE.Mesh(new THREE.PlaneGeometry(13, 8), new THREE.MeshBasicMaterial({ map: ct }));
-      bd.position.set(A - 42 + dx, 5.2, 34); bd.rotation.y = dx > 0 ? Math.PI / 2 : -Math.PI / 2; scene.add(bd);
+      bd.position.set(A - 42 + dx, 5.2, -ST_HL + 47); bd.rotation.y = dx > 0 ? Math.PI / 2 : -Math.PI / 2; scene.add(bd);
     });
     const frame = new THREE.Mesh(new THREE.BoxGeometry(0.6, 8.8, 13.8), std(0x23282e, 0.7));
-    frame.position.set(A - 42, 5.0, 34); frame.castShadow = true; scene.add(frame);
+    frame.position.set(A - 42, 5.0, -ST_HL + 47); frame.castShadow = true; scene.add(frame);
     [-4.5, 4.5].forEach(dz => {
       const post = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 5.2, 8), std(0x666666, 0.5, 0.5));
-      post.position.set(A - 42, 2.6, 34 + dz); post.castShadow = true; scene.add(post);
+      post.position.set(A - 42, 2.6, -ST_HL + 47 + dz); post.castShadow = true; scene.add(post);
     });
   }
   // 審判塔（決勝線の外側）: 白い塔体＋ガラス張りの審判室＋「審判」表示
@@ -2383,7 +2528,7 @@ function buildVenueDressing() {
     roof.position.y = 10.05; roof.castShadow = true; g.add(roof);
     const sign = makeBoardMesh('審判', '#20401c', '#ffffff', true);
     sign.position.set(-1.78, 8.75, 0); sign.rotation.y = -Math.PI / 2; g.add(sign);
-    g.position.set(A + 17.5, 0, -11);
+    g.position.set(A + 17.5, 0, -ST_HL + 14); // フェーズ31: 決勝線のすぐ外側
     scene.add(g);
   }
   // 旗ポール（内馬場・ホームストレート沿い）: 日の丸／場旗／白旗。旗は波形を
@@ -2400,8 +2545,8 @@ function buildVenueDressing() {
       flagTex(g2 => { g2.fillStyle = '#1d5c38'; g2.fillRect(0, 0, 256, 160); g2.strokeStyle = '#d9b64a'; g2.lineWidth = 6; g2.strokeRect(8, 8, 240, 144); g2.fillStyle = '#ffffff'; g2.font = '900 56px sans-serif'; g2.textAlign = 'center'; g2.fillText('競馬場', 128, 100); }),
       flagTex(g2 => { g2.fillStyle = '#f7f7f5'; g2.fillRect(0, 0, 256, 160); g2.strokeStyle = '#1d5c38'; g2.lineWidth = 9; g2.beginPath(); g2.arc(128, 80, 46, 0, 7); g2.stroke(); g2.fillStyle = '#1d5c38'; g2.font = '900 40px sans-serif'; g2.textAlign = 'center'; g2.fillText('競馬', 128, 95); }),
     ];
-    [-0.21, 0, 0.21].forEach((ang, fi) => {
-      const p = atAngle(ang, -21);
+    [90, 170, 250].forEach((s, fi) => { // フェーズ31: 弧長ベース（ホームストレート内側）
+      const p = atAngle(s, -21);
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 10.5, 8), std(0xd8d8d4, 0.45, 0.5));
       pole.position.set(p.x, 5.25, p.z); pole.castShadow = true; scene.add(pole);
       const geo = new THREE.PlaneGeometry(3.1, 1.95, 12, 4);
@@ -2489,9 +2634,18 @@ function initThree() {
   // 地面: 外周の芝（1人用の刈り目ストライプ芝テクスチャ）
   const ground = new THREE.Mesh(new THREE.CircleGeometry(1460, 48), new THREE.MeshStandardMaterial({ map: grassTexture(90, 90), color: 0xc9ccc0, roughness: 1 }));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -0.03; ground.receiveShadow = true; scene.add(ground);
-  // 内馬場の芝
-  const infield = new THREE.Mesh(new THREE.CircleGeometry(1, 64), new THREE.MeshStandardMaterial({ map: grassTexture(30, 30, true), color: 0xdfe4d2, roughness: 1 })); // フェーズ28: リピート46→30で繰り返し感を減らし、色味の白飛ばしを少し抑えた
-  infield.rotation.x = -Math.PI / 2; infield.scale.set(A - 12.5, B - 12.5, 1); infield.position.y = 0.0; infield.receiveShadow = true; scene.add(infield);
+  // 内馬場の芝（フェーズ31: スタジアム形状に合わせ、中心線から12.5m内側の輪郭で切り出す）
+  const infShape = new THREE.Shape();
+  {
+    const iR = ST_R - 12.5;
+    infShape.moveTo(iR, -ST_HL);
+    infShape.lineTo(iR, ST_HL);
+    infShape.absarc(0, ST_HL, iR, 0, Math.PI, false);
+    infShape.lineTo(-iR, -ST_HL);
+    infShape.absarc(0, -ST_HL, iR, Math.PI, Math.PI * 2, false);
+  }
+  const infield = new THREE.Mesh(new THREE.ShapeGeometry(infShape, 24), new THREE.MeshStandardMaterial({ map: grassTexture(0.06, 0.06, true), color: 0xdfe4d2, roughness: 1 })); // ShapeGeometry の UV は実寸(m)なので repeat は 1/タイル長
+  infield.rotation.x = -Math.PI / 2; infield.position.y = 0.0; infield.receiveShadow = true; scene.add(infield);
   // ダートコース（1人用の写真風ダート: 蹄跡・ハロー目・踏み荒らし帯＋バンプで凹凸感）
   const dirtTex = new THREE.CanvasTexture(makeDirtCanvas());
   dirtTex.wrapS = dirtTex.wrapT = THREE.RepeatWrapping; dirtTex.colorSpace = THREE.SRGBColorSpace; dirtTex.anisotropy = 8;
@@ -2513,13 +2667,13 @@ function initThree() {
   scene.add(buildRail(12.4));
   // 決勝線＋ゴールポスト（赤ポール＋金球、1人用と同色）
   const finishLine = new THREE.Mesh(new THREE.BoxGeometry(23.0, 0.012, 0.6), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }));
-  finishLine.position.set(A, 0.045, 0); scene.add(finishLine);
+  finishLine.position.set(A, 0.045, -ST_HL); scene.add(finishLine);
   const post = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 5, 10), new THREE.MeshStandardMaterial({ color: 0xd8232a, roughness: 0.5 }));
-  post.position.set(A - 12.6, 2.5, 0); post.castShadow = true; scene.add(post);
+  post.position.set(A - 12.6, 2.5, -ST_HL); post.castShadow = true; scene.add(post);
   const ball = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 12), new THREE.MeshStandardMaterial({ color: 0xffc21c, roughness: 0.35, metalness: 0.3 }));
-  ball.position.set(A - 12.6, 5.1, 0); ball.castShadow = true; scene.add(ball);
-  // メインスタンド
-  scene.add(buildGrandstand());
+  ball.position.set(A - 12.6, 5.1, -ST_HL); ball.castShadow = true; scene.add(ball);
+  // メインスタンド（フェーズ31: 決勝線の少し先が正面に来るよう z を寄せる）
+  const gs = buildGrandstand(); gs.position.z = -ST_HL + 40; scene.add(gs);
   buildVenueDressing();
   buildTreeLine();
   buildGate();
@@ -2608,11 +2762,12 @@ function raceShapeMod(dist, styleKey) {
 }
 const LAP_STRAIGHT = 654.5, LAP_ARC = 345.6; // 1人用エンジンと同一の物理コース内訳
 function sectionName(dist) {
+  // フェーズ31: 描画コース（スタジアム）の区間と一致させた（物理境界とも一致）
   const s = ((dist + physOff()) % TRACK_LEN + TRACK_LEN) % TRACK_LEN;
   const remain = RACE_DIST - dist;
-  if (s < LAP_STRAIGHT) return remain <= 400 ? '最終直線' : 'ホームストレート';
-  if (s < LAP_STRAIGHT + LAP_ARC) return '第1〜2コーナー';
-  if (s < LAP_STRAIGHT * 2 + LAP_ARC) return '向かい正面';
+  if (s < ST_L) return remain <= 400 ? '最終直線' : 'ホームストレート';
+  if (s < ST_L + ST_ARC) return '第1〜2コーナー';
+  if (s < ST_L * 2 + ST_ARC) return '向かい正面';
   return '第3〜4コーナー';
 }
 let pendingMeta = null;
@@ -2689,6 +2844,7 @@ function setupField(field) {
   slipActive = false; lookYaw = 0; lookHeld = null; dragYaw = 0;
   foulCount = 0; contactT = 0; selfFoulCd = 0; foulCdMap.clear();
   finishTimes = new Map(); flashDone = false; photoShownAt = 0; photoActive = false;
+  crowdStop(); // フェーズ30: 前レースの歓声が残っていたら止める（beginRace で改めて開始）
   replayFrames = []; replayAcc = 0; gateTow = 0; myGateT = 0;
   closeInfo = null; closeMode = false; closeAutoDone = false; closePhase = 'run';
   $('foulTag').textContent = '反則 0回'; $('foulTag').classList.remove('foul-bad');
@@ -2753,6 +2909,7 @@ function beginRace(field, meta) {
   sfx('clank'); // フェーズ22: ゲート開扉の金属音（1人用 gateClank 相当）
   raceStartAt = performance.now();
   racing = true;
+  crowdStart(); // フェーズ30: 観客の歓声（ざわめき→直線で増大→ゴールでピーク）
   lastFrame = performance.now();
   horseMeshes.forEach(m => setHorseAnim(m, 'Gallop'));
   requestAnimationFrame(raceLoop);
@@ -2817,16 +2974,16 @@ function buildTreeLine() {
     { off0: 94, off1: 138, keep: 0.5, s0: 1.1, s1: 1.75 },   // 後列: 霞の中の稜線用
   ];
   for (const row of rows) {
-    for (let t = 0; t < Math.PI * 2; t += 0.0225) { // フェーズ19: コース拡大（周長2倍）に合わせ刻みを半分にし、並木のm単位密度を維持
-      if (Math.abs(angDiff(t, 0)) < 0.23) continue;        // メインスタンド裏は空ける
-      if (Math.abs(angDiff(t, Math.PI)) < 0.21) continue;  // 向正面スタンド裏も空ける
-      const density = 0.65 + 0.35 * Math.sin(t * 3 + 1.7) * Math.sin(t * 5 + 0.4);
+    for (let s = 0; s < TRACK_LEN; s += 7.2) { // フェーズ31: 弧長ベース（旧: 楕円角度 0.0225rad 刻み ≒ 同密度）
+      if (Math.min(s, TRACK_LEN - s) < 150) continue;            // メインスタンド裏（決勝線付近）は空ける
+      if (Math.abs(s - (ST_L + ST_ARC + ST_HL)) < 140) continue; // 向正面スタンド裏も空ける
+      const density = 0.65 + 0.35 * Math.sin(s * 0.0094 + 1.7) * Math.sin(s * 0.0157 + 0.4);
       if (rnd() > row.keep * density) continue;
-      const tt = t + (rnd() - 0.5) * 0.02;
-      const c = ellipsePoint(tt), n = ellipseNormal(tt);
+      const ss = s + (rnd() - 0.5) * 6;
       const off = row.off0 + rnd() * (row.off1 - row.off0);
+      const p = coursePoint(ss, off);
       trees.push({
-        x: c.x + n.x * off, z: c.z + n.z * off,
+        x: p.x, z: p.z,
         s: row.s0 + rnd() * (row.s1 - row.s0),
         rot: rnd() * Math.PI * 2, tilt: (rnd() - 0.5) * 0.05,
         tone: rnd(), tone2: rnd(),
@@ -3159,7 +3316,7 @@ function showGoalFlash(place, label) {
   $('goalFlashMain').textContent = place + '着！';
   $('goalFlashSub').textContent = (label ? label + ' ／ ' : '') + fieldSize + '頭中';
   f.classList.add('show');
-  sfx('cheer'); // フェーズ22: ゴールの歓声（1人用 crowdCheer 相当。flashDone 経由で1レース1回だけ呼ばれる）
+  crowdPulse(); // フェーズ30: 旧 sfx('cheer') の単発歓声は継続歓声のピーク（パルス）に統合（flashDone 経由で1レース1回）
   setTimeout(() => f.classList.remove('show'), 2600);
 }
 
@@ -3343,7 +3500,7 @@ function updateCloseCaptions(fr) {
 /* ゴール瞬間のフリーズ開始: 大きな着差表示＋歓声 */
 function onCloseFreeze() {
   replayCaption(`🏁 ${closeInfo.term}！！\n${closeInfo.first.horseName} が ${closeInfo.second.horseName} を${closeInfo.term}で下した！`, true);
-  sfx('cheer');
+  crowdPulse(); // レース中の歓声は止まっているため、内部で従来の単発歓声にフォールバックする
 }
 /* フリーズ後: 写真判定の絵（既存 drawPhotoFinish）に繋げる */
 function showClosePhoto() {
@@ -3370,6 +3527,7 @@ function replayLoop(now) {
   if (!replayMode) return;
   requestAnimationFrame(replayLoop);
   const dt = Math.min(0.05, (now - replayLast) / 1000); replayLast = now;
+  dynResTick(Math.max(0.001, (now - (replayLoop._p || now)) / 1000), now); replayLoop._p = now; // フェーズ30: リプレイ中も動的解像度（dt は0.05に丸まるため実経過で測る）
   /* 僅差リプレイのフェーズ制御（フェーズ28）。spd は全馬共通の replayT にだけ
      掛かる倍率で、馬ごとの時計は存在しない（順位が入れ替わる余地がない）。 */
   let spd = replaySpeed;
@@ -3528,6 +3686,32 @@ function smoothRunner(r, dt, now) {
   r.animSpeed = dt > 0 ? (r.smoothDist - prev) / dt : 0;
 }
 let frameTimeScale = 1; // 自馬の時計の倍率（フェーズ26で接戦スロー廃止のため常に1）。脚アニメを物理と同じ時計で進めるために updateMeshes へ渡す
+/* ---------- 動的解像度スケーリング（フェーズ30） ----------
+   通常時は従来どおり上限（devicePixelRatio 最大1.75）のまま。フレーム時間が
+   持続的に重い時だけ pixelRatio を段階的に下げ、軽くなれば元へ戻す。
+   「常時下げる」のではなく負荷ピーク時の一時調整なので、軽い場面の
+   見た目（解像度）は従来と同一。影・モデル・テクスチャには触らない。 */
+const RES_FRAC = [1.0, 0.85, 0.7, 0.57];
+let resIdx = 0, resEmaMs = 16, resHotSince = 0, resCoolSince = 0;
+function dynResTick(dtSec, now) {
+  if (!renderer || dtSec <= 0) return;
+  resEmaMs = resEmaMs * 0.95 + Math.min(100, dtSec * 1000) * 0.05;
+  if (resEmaMs > 26) { // 持続的に重い（約38fps未満）
+    if (!resHotSince) resHotSince = now;
+    resCoolSince = 0;
+    if (now - resHotSince > 800 && resIdx < RES_FRAC.length - 1) {
+      resIdx++; resHotSince = 0;
+      renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.75) * RES_FRAC[resIdx]);
+    }
+  } else if (resEmaMs < 13.5) { // 持続的に軽い（約74fps超）→ ゆっくり元へ
+    if (!resCoolSince) resCoolSince = now;
+    resHotSince = 0;
+    if (now - resCoolSince > 4000 && resIdx > 0) {
+      resIdx--; resCoolSince = 0;
+      renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.75) * RES_FRAC[resIdx]);
+    }
+  } else { resHotSince = 0; resCoolSince = 0; }
+}
 function raceLoop(now) {
   if (!racing) return;
   requestAnimationFrame(raceLoop);
@@ -3539,6 +3723,7 @@ function raceLoop(now) {
      一致させる。描画・補間・カメラは従来どおりフレームに1回だけ。
      サーバー時刻で進むNPCとの進み方の差もこれで消える。 */
   const rawDt = Math.min(1.2, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
+  dynResTick(rawDt, now); // フェーズ30: 動的解像度（重い時だけ一時的に下げる）
   /* 接戦スローモーションはマルチ版では廃止（フェーズ26）:
      1人用はゴール前70m・接戦で sdt を 0.68 倍にするが、あちらは全馬が同じ
      時計で一緒に遅くなるため相対速度は変わらない。マルチ版では NPC が
@@ -3769,6 +3954,17 @@ if (new URLSearchParams(location.search).has('orbit') || new URLSearchParams(loc
       }
       return out;
     },
+    // 検証用（フェーズ31）: 100m区間ごとの曲率 |Δheading|/100m (rad/m)。直線=0、コーナー=1/110≒0.0091
+    curvature: () => {
+      const out = [];
+      for (let s0 = 0; s0 < 2000; s0 += 100) {
+        const a = coursePoint(s0, 0), b = coursePoint(s0 + 100, 0);
+        let d = Math.atan2(b.dx, b.dz) - Math.atan2(a.dx, a.dz);
+        while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
+        out.push(+Math.abs(d / 100).toFixed(4));
+      }
+      return out;
+    },
     sampleJock: () => {
       const out = [];
       horseMeshes.forEach(m => { const v = m.userData.vis; if (v) out.push({ z: +v.jock.position.z.toFixed(3), rz: +v.jock.rotation.z.toFixed(3), rx: +v.jock.rotation.x.toFixed(3) }); });
@@ -3881,6 +4077,32 @@ if (new URLSearchParams(location.search).has('orbit') || new URLSearchParams(loc
       btnCloseText: $('btnCloseReplay').textContent,
       caption: $('commentary').textContent, captionBig: $('commentary').classList.contains('big'),
       photoShown: $('photoUI').style.display === 'flex', photoTitle: $('photoTitle').textContent,
+    }),
+    // 検証用（フェーズ30）: 歓声の状態と、状況→レベルの純関数評価
+    crowdProbe: () => ({
+      active: !!crowd, target: crowd ? +crowd.target.toFixed(3) : null,
+      gainM: crowd ? +crowd.gM.gain.value.toFixed(4) : null,
+      gainC: crowd ? +crowd.gC.gain.value.toFixed(4) : null,
+      goalAgo: crowd && crowd.goalAt != null ? +((performance.now() - crowd.goalAt) / 1000).toFixed(2) : null,
+      sndMute, master: masterGain ? +masterGain.gain.value.toFixed(3) : null,
+      scene: crowdScene(),
+    }),
+    crowdTargetOf: (s, goalAgo) => +crowdTargetLevel(s, goalAgo == null ? null : goalAgo).toFixed(3),
+    crowdPulseTry: () => { crowdPulse(); return crowd ? crowd.pulseAt != null : 'fallback'; },
+    crowdStopTry: () => { crowdStop(); return !crowd; },
+    // 検証用（フェーズ30）: 描画負荷の棚卸しと間引き/動的解像度の状態
+    perfProbe: () => ({
+      calls: renderer ? renderer.info.render.calls : null,
+      tris: renderer ? renderer.info.render.triangles : null,
+      programs: renderer ? renderer.info.programs.length : null,
+      textures: renderer ? renderer.info.memory.textures : null,
+      geometries: renderer ? renderer.info.memory.geometries : null,
+      pixelRatio: renderer ? renderer.getPixelRatio() : null,
+      resIdx, resEmaMs: +resEmaMs.toFixed(1),
+      shadowMapSize: sunLight ? sunLight.shadow.mapSize.x : null,
+      casters: (() => { let n = 0; if (scene) scene.traverse(o => { if (o.castShadow) n++; }); return n; })(),
+      perfStats: { ...perfStats },
+      shadowAutoUpdate: renderer ? renderer.shadowMap.autoUpdate : null,
     }),
     // 検証用（フェーズ28）: 判定の純粋関数チェック（仮の standings で発動/非発動を見る）
     closeTry: (gapSec) => {
@@ -4013,6 +4235,9 @@ if (new URLSearchParams(location.search).has('orbit') || new URLSearchParams(loc
     },
   };
 }
+/* フェーズ30: パフォーマンス計測カウンタ（__km.perfProbe で公開） */
+const perfStats = { mixerCalls: 0, mixerSkipped: 0, bridleSkipped: 0 };
+const _umP = { x: 0, z: 0, dx: 0, dz: 0, t: 0 }, _umPA = { x: 0, z: 0, dx: 0, dz: 0, t: 0 }, _umPB = { x: 0, z: 0, dx: 0, dz: 0, t: 0 };
 function updateMeshes(dt) {
   initDust();
   const goingDustMul = (typeof raceGoing !== 'undefined' && raceGoing) ? (raceGoing.id === 'ju' ? 0.25 : raceGoing.id === 'yaya' ? 0.55 : 1.0) : 1.0;
@@ -4021,26 +4246,38 @@ function updateMeshes(dt) {
     const isMe = nick === myName;
     const d = isMe ? myDist : r.smoothDist;
     const lane = isMe ? latToLane(myLat) : renderLaneOf(r);
-    const p = trackPoint(d, lane);
+    const p = trackPointInto(d, lane, _umP); // フェーズ30: 無割り当て版（同一計算）
     mesh.position.set(p.x, 0, p.z);
     mesh.rotation.y = Math.atan2(p.dx, p.dz);
+    const dc = camera ? Math.hypot(camera.position.x - p.x, camera.position.z - p.z) : 0; // カメラ距離（間引き・土煙の判定に共用）
     // 名前タグ: 他人の馬は近距離ほど濃く・130m超で消す。自馬は一人称中は隠す
     const nameTag = mesh.userData.nameTag;
     if (nameTag) {
       if (isMe) { nameTag.visible = replayMode || DEBUG_ORBIT; }
       else if (camera) {
-        const dc = Math.hypot(camera.position.x - p.x, camera.position.z - p.z);
         nameTag.visible = dc < 130;
         if (nameTag.visible) nameTag.material.opacity = dc <= 40 ? 0.95 : Math.max(0.25, 0.95 * (1 - (dc - 40) / 90));
       }
     }
+    /* フェーズ30: 遠方馬のアニメーション/手綱の更新間引き。
+       自馬と近距離（〜55m）は毎フレーム、55m超は1/2、110m超は1/3にし、
+       省いた分の dt は蓄積して次回にまとめて進める（歩様の進み具合は不変）。
+       遠方では脚の動きの差は判別できないため見た目は変わらない。 */
+    let animDiv = 1;
+    if (!isMe && !replayMode) animDiv = dc > 110 ? 3 : dc > 55 ? 2 : 1;
+    mesh.userData.animAcc = (mesh.userData.animAcc || 0) + dt;
+    mesh.userData.animTick = (mesh.userData.animTick || 0) + 1;
+    const doAnim = animDiv === 1 || (mesh.userData.animTick % animDiv) === 0;
+    const adt = doAnim ? mesh.userData.animAcc : 0;
+    if (doAnim) mesh.userData.animAcc = 0;
     const spd = isMe ? mySpeed : r.animSpeed;
     // 土煙の発生: 速度と周囲の密度に連動。自馬は控えめ＋後方から（視界を守る）
-    if (dust && racing && spd > 5) {
+    // フェーズ30: 110m超の馬の土煙は画面では判別できないため発生自体を省き、60m超は半減
+    if (dust && racing && spd > 5 && (isMe || dc < 110)) {
       let nearby = 0;
       runners.forEach((o, on) => { if (on !== nick && Math.abs((on === myName ? myDist : o.smoothDist) - d) < 7) nearby++; });
       const densityMul = Math.min(2.0, 1 + nearby * 0.18);
-      let rate = (spd - 5) * 1.15 * densityMul * goingDustMul * (isMe ? 0.4 : 1);
+      let rate = (spd - 5) * 1.15 * densityMul * goingDustMul * (isMe ? 0.4 : 1) * (!isMe && dc > 60 ? 0.5 : 1);
       mesh.userData.dustAcc = (mesh.userData.dustAcc || 0) + rate * dt;
       const back = isMe ? 2.1 : 1.35;
       while (mesh.userData.dustAcc >= 1) {
@@ -4066,16 +4303,20 @@ function updateMeshes(dt) {
     if (anim) {
       if (racing && spd > 0.5) setHorseAnim(mesh, 'Gallop');
       else if (racing && spd <= 0.5 && d > RACE_DIST) setHorseAnim(mesh, 'Idle'); // ゴール後の流しで止まったら立ち姿へ
-      if (anim.current === 'Gallop' && racing) {
+      if (!doAnim) perfStats.mixerSkipped++;
+      else if (anim.current === 'Gallop' && racing) {
         // フェーズ19: 1人用 stepHorse と同一の時計駆動に戻す:
         //   mixer.update(dt × (0.12 + sf×1.05))
         // 巡航では 2.34歩/s（sf=1）となり、世界スケール是正（1.000）と合わせて
         // 画面上の歩幅が1人用と一致する。自馬は物理と同じ時計（frameTimeScale、
         // フェーズ26以降は常に1）で進める。他馬はサーバー時刻で進むため実時間 dt のまま。
-        const mdt = isMe ? dt * frameTimeScale : dt;
+        // フェーズ30: 間引き時は蓄積した adt を使うため歩様の進み方は同じ。
+        const mdt = isMe ? adt * frameTimeScale : adt;
         anim.mixer.update(mdt * (0.12 + sfH * 1.05));
+        perfStats.mixerCalls++;
       } else {
-        anim.mixer.update(dt); // Idle は等速（呼吸・耳・尾の動きを止めない）
+        anim.mixer.update(adt); // Idle は等速（呼吸・耳・尾の動きを止めない）
+        perfStats.mixerCalls++;
       }
     }
     if (mesh.userData.fallback) {
@@ -4107,7 +4348,7 @@ function updateMeshes(dt) {
       vis.jock.position.z = 0.08;
       // コーナー内傾: 進行方向の変化率（曲率）×速度² から求め、内側へだけ倒す（最大約5°）
       if (spd > 4) {
-        const pa = trackPoint(Math.max(0, d - 5), lane), pb = trackPoint(d + 5, lane);
+        const pa = trackPointInto(Math.max(0, d - 5), lane, _umPA), pb = trackPointInto(d + 5, lane, _umPB); // フェーズ30: 無割り当て版
         let dth = Math.atan2(pb.dx, pb.dz) - Math.atan2(pa.dx, pa.dz);
         while (dth > Math.PI) dth -= Math.PI * 2;
         while (dth < -Math.PI) dth += Math.PI * 2;
@@ -4119,7 +4360,8 @@ function updateMeshes(dt) {
         const side = (-p.x / cl) * rightX + (-p.z / cl) * rightZ;
         vis.jock.rotation.z = leanMag * (side >= 0 ? 1 : -1);
       } else vis.jock.rotation.z = 0;
-      if (racing || d > 0) vis.updateBridle();
+      // 手綱の追従計算は遠方では間引く（細い線分で遠方では差が見えない。自馬は常時）
+      if (racing || d > 0) { if (isMe || dc <= 45 || doAnim) vis.updateBridle(); else perfStats.bridleSkipped++; }
     }
   });
   updateDust(dt);
@@ -4128,21 +4370,24 @@ const DEBUG_CAM = new URLSearchParams(location.search).get('cam'); // 検証用�
 function orbitCamera(dist) {
   // 検証用固定視点: 内馬場側から決勝直線・ゴール・メインスタンドを一望する。
   // スタート直後の集団（全頭＋騎手）とスタンドが同じ画角に入る。
-  if (DEBUG_CAM === 'stand') {        // メインスタンドの正面寄り
-    camera.position.set(A - 265, 13, -72); camera.lookAt(A + 22, 6, 6);
+  if (DEBUG_CAM === 'stand') {        // メインスタンドの正面寄り（フェーズ31: 決勝線 z=-ST_HL 付近）
+    camera.position.set(30, 12, -ST_HL - 85); camera.lookAt(A + 15, 5, -ST_HL + 55);
   } else if (DEBUG_CAM === 'sunset') { // フェーズ29検証用: 決勝直線の内側から太陽方向（方位56°・仰角約32°）を見る。太陽（高度35°）が画面中央付近に来て、円盤とグローをHUDに隠されず確認できる
-    camera.position.set(A - 30, 3.2, -95); camera.lookAt(A + 55, 98, 30);
+    camera.position.set(A - 40, 3.2, -60); camera.lookAt(A + 8, 52, 12);
   } else if (DEBUG_CAM === 'back') {  // 向正面スタンド
-    camera.position.set(-A + 132, 15, 124); camera.lookAt(-(A + 25), 6, 0);
-  } else if (DEBUG_CAM === 'gate') {  // ゲートの斜め前
-    camera.position.set(A - 38, 4.5, 34); camera.lookAt(A + 3, 1.8, -2);
+    camera.position.set(-30, 14, 85); camera.lookAt(-(A + 15), 5, -15);
+  } else if (DEBUG_CAM === 'gate') {  // ゲートの斜め前（2000mの発走地点＝決勝線）
+    camera.position.set(A - 38, 4.5, -ST_HL + 34); camera.lookAt(A + 3, 1.8, -ST_HL - 2);
   } else if (DEBUG_CAM === 'trees') { // 内馬場から向正面の外側（地平線帯）を見る
     camera.position.set(40, 5.5, 26); camera.lookAt(40, 7, -(B + 160));
   } else if (DEBUG_CAM === 'trees2') { // コース際から外周方向（近い樹木と地平線）
     camera.position.set(-60, 3.2, -96); camera.lookAt(-A, 6, -(B + 70));
+  } else if (DEBUG_CAM === 'oval') {  // フェーズ31検証用: コース全体を上空から（スタジアム形状の確認。霧に埋もれるため検証時のみ fog を切る）
+    if (scene && scene.fog) scene.fog = null;
+    camera.position.set(0, 1450, 0.01); camera.lookAt(0, 0, 0);
   } else {
-    camera.position.set(A - 52, 9, 66);
-    camera.lookAt(A + 6, 1.6, -4);
+    camera.position.set(A - 52, 9, -ST_HL + 66);
+    camera.lookAt(A + 6, 1.6, -ST_HL - 4);
   }
   const p = trackPoint(dist, latToLane(myLat));
   if (sunLight) {
