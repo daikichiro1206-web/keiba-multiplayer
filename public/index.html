@@ -1203,20 +1203,22 @@ function cornerFactorAt(dist, lat) {
 /* 勝負服・毛色はサーバーの名簿（1人用 DEFS と同一の色指定）が正。
    SILKS はサーバー色が無い場合の予備として残す */
 const SILKS = {
-  deep: { coat: 0x4a2c14, mane: 0x140a04, jock: 0xd7263d, helm: 0xd7263d }, orfevre: { coat: 0x8a5a28, mane: 0x2a1808, jock: 0xf5f0e6, helm: 0x222222 },
-  kitasan: { coat: 0x3a2410, mane: 0x0d0602, jock: 0xf2c230, helm: 0x111111 }, almond: { coat: 0x5d3a1c, mane: 0x1c0f05, jock: 0x9fd8e8, helm: 0x9fd8e8 },
-  equinox: { coat: 0x2e1c0e, mane: 0x0a0503, jock: 0x9fd8e8, helm: 0x9fd8e8 }, contrail: { coat: 0x59371d, mane: 0x201105, jock: 0x9fd8e8, helm: 0x9fd8e8 },
-  liberty: { coat: 0x6b4423, mane: 0x241305, jock: 0xe8e8e8, helm: 0xd7263d }, croix: { coat: 0x503218, mane: 0x180c04, jock: 0x9fd8e8, helm: 0x9fd8e8 },
-  goldship: { coat: 0xb9b3a4, mane: 0xe8e2d2, jock: 0xd7263d, helm: 0xd7263d }, oguri: { coat: 0xa79e8d, mane: 0xd8d2c2, jock: 0x2e7d32, helm: 0x2e7d32 },
-  suzuka: { coat: 0x6e4525, mane: 0x241305, jock: 0x2e9e4f, helm: 0x2e9e4f }, vodka: { coat: 0x54331a, mane: 0x180c04, jock: 0xf5f0e6, helm: 0x333333 },
-  gentil: { coat: 0x33200f, mane: 0x0d0602, jock: 0xf5f0e6, helm: 0x111111 }, rudolf: { coat: 0x5d3a1c, mane: 0x1c0f05, jock: 0x2e7d32, helm: 0x2e7d32 },
-  teio: { coat: 0x66452a, mane: 0x2a1a08, jock: 0x1565c0, helm: 0x1565c0 }, mcqueen: { coat: 0xb5ab9c, mane: 0xe2dccb, jock: 0x7b1fa2, helm: 0x7b1fa2 },
-  sodashi: { coat: 0xf2efe9, mane: 0xf7f4ec, jock: 0xf2c230, helm: 0xf2c230 }, 'do-deuce': { coat: 0x4e3016, mane: 0x140a04, jock: 0x1565c0, helm: 0x1565c0 },
+  deep: { coat: 0x38220f, mane: 0x0d0704, jock: 0xf2c230, helm: 0x1c1c22, pat: 'stripes-v', acc: 0x1c1c22, slv: 0xf2c230 }, orfevre: { coat: 0x9a5a26, mane: 0xcbb086, jock: 0x23232a, helm: 0xf2c230, pat: 'plain', acc: 0xc0272d, slv: 0xc0272d },
+  kitasan: { coat: 0x332216, mane: 0x0e0805, jock: 0xf2c230, helm: 0x111111 }, almond: { coat: 0x6e3f20, mane: 0x140b06, jock: 0xf2f2f2, helm: 0x2456a6, pat: 'dots', acc: 0x2456a6, slv: 0xf2f2f2 },
+  equinox: { coat: 0x33200f, mane: 0x0d0704, jock: 0xf2f2f2, helm: 0x2456a6, pat: 'dots', acc: 0x2456a6, slv: 0xf2f2f2 }, contrail: { coat: 0x35200e, mane: 0x0d0704, jock: 0x9fd8e8, helm: 0x9fd8e8 },
+  liberty: { coat: 0x63391d, mane: 0x150c05, jock: 0xe8e8e8, helm: 0xd7263d }, croix: { coat: 0x5d3517, mane: 0x120906, jock: 0x9fd8e8, helm: 0x9fd8e8 },
+  goldship: { coat: 0xb5b0a4, mane: 0x98938a, jock: 0xd7263d, helm: 0xd7263d }, oguri: { coat: 0xa9a49a, mane: 0x8a857a, jock: 0x2e7d32, helm: 0x2e7d32 },
+  suzuka: { coat: 0x6b4423, mane: 0x140b06, jock: 0x2e9e4f, helm: 0x2e9e4f }, vodka: { coat: 0x38220f, mane: 0x0d0704, jock: 0xf5f0e6, helm: 0x23232a },
+  gentil: { coat: 0x33200f, mane: 0x0d0704, jock: 0x23232a, helm: 0xf2c230, pat: 'plain', acc: 0xc0272d, slv: 0xc0272d }, rudolf: { coat: 0x5a3418, mane: 0x120905, jock: 0x2e7d32, helm: 0x2e7d32 },
+  teio: { coat: 0x5a3418, mane: 0x120905, jock: 0x1565c0, helm: 0x1565c0 }, mcqueen: { coat: 0xb3aea2, mane: 0x8f8a7e, jock: 0x7b1fa2, helm: 0x7b1fa2 },
+  sodashi: { coat: 0xe9e5da, mane: 0xdfd8c8, jock: 0xf2c230, helm: 0xf2c230 }, 'do-deuce': { coat: 0x54331d, mane: 0x110906, jock: 0x1565c0, helm: 0x1565c0 },
 };
 const silksOf = id => {
   const h = horses.find(x => x.id === id);
-  if (h && h.coat) return { coat: h.coat, mane: h.mane, jock: h.jock, helm: h.helm };
-  return SILKS[id] || { coat: 0x5f3a1e, mane: 0x191008, jock: 0x888888, helm: 0x444444 };
+  if (h && h.coat) return { coat: h.coat, mane: h.mane, jock: h.jock, helm: h.helm, pat: h.pat || 'plain', acc: h.acc ?? h.helm, slv: h.slv ?? h.helm };
+  const s = SILKS[id];
+  if (s) return { pat: 'plain', acc: s.helm, slv: s.helm, ...s };
+  return { coat: 0x5f3a1e, mane: 0x191008, jock: 0x888888, helm: 0x444444, pat: 'plain', acc: 0x444444, slv: 0x444444 };
 };
 
 /* ---------- モデル読み込み（馬＋騎手） ---------- */
@@ -1416,6 +1418,124 @@ function numberTexture(n) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
+/* ---------- 勝負服テクスチャ生成（フェーズ27） ----------
+   従来は jockeySilks マテリアル全体を単色で塗るだけで模様が無かった。
+   騎手GLBはUVアトラスを持つので、頂点の支配ボーンから部位（胴/袖/帽）を
+   判定し、バインドポーズ座標（x=左右, y=高さ）で模様を評価して
+   キャンバスへラスタライズする。部品の後付けはせずテクスチャのみで表現。
+   部位: 0=胴（模様あり） 1=袖（袖色ベタ） 2=帽まわり（帽子色ベタ） */
+let silksGeoData = null;
+function riderPartOfJoint(name) {
+  if (name === 'Head' || name === 'HeadTop_End' || name === 'Neck') return 2;
+  if (/^(Left|Right)(Arm|ForeArm|Hand)/.test(name || '')) return 1;
+  return 0;
+}
+function getSilksGeoData() {
+  if (silksGeoData || !riderTemplate) return silksGeoData;
+  let mesh = null;
+  riderTemplate.scene.traverse(o => {
+    if (!mesh && o.isMesh && o.geometry && o.material && o.material.name === 'jockeySilks') mesh = o;
+  });
+  if (!mesh) return null;
+  const geo = mesh.geometry;
+  const boneNames = mesh.skeleton ? mesh.skeleton.bones.map(b => b.name) : [];
+  const si = geo.getAttribute('skinIndex'), sw = geo.getAttribute('skinWeight');
+  const part = new Uint8Array(geo.getAttribute('position').count);
+  for (let i = 0; i < part.length; i++) {
+    const w4 = [sw.getX(i), sw.getY(i), sw.getZ(i), sw.getW(i)];
+    const j4 = [si.getX(i), si.getY(i), si.getZ(i), si.getW(i)];
+    let best = 0;
+    for (let k = 1; k < 4; k++) if (w4[k] > w4[best]) best = k;
+    part[i] = riderPartOfJoint(boneNames[j4[best]]);
+  }
+  const idx = geo.getIndex(), tris = [];
+  const total = idx ? idx.count : geo.getAttribute('position').count;
+  for (let t = 0; t + 2 < total; t += 3) tris.push([idx ? idx.getX(t) : t, idx ? idx.getX(t + 1) : t + 1, idx ? idx.getX(t + 2) : t + 2]);
+  silksGeoData = { geo, part, tris };
+  return silksGeoData;
+}
+const silksTexCache = new Map();
+function silksTextureFor(def) {
+  const key = [def.pat, def.jock, def.acc, def.slv, def.helm].join('|');
+  if (silksTexCache.has(key)) return silksTexCache.get(key);
+  const data = getSilksGeoData();
+  if (!data) return null;
+  const S = 512;
+  const canvas = document.createElement('canvas'); canvas.width = canvas.height = S;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const px = img.data, filled = new Uint8Array(S * S);
+  const rgb = hex => [hex >> 16 & 255, hex >> 8 & 255, hex & 255];
+  const C = { body: rgb(def.jock), acc: rgb(def.acc), slv: rgb(def.slv), cap: rgb(def.helm) };
+  const patBody = (x, y) => {
+    switch (def.pat) {
+      case 'stripes-v': return Math.floor((x + 0.66) / 0.13) % 2 ? C.acc : C.body;
+      case 'stripes-h': return Math.floor(y / 0.115) % 2 ? C.acc : C.body;
+      case 'checks': return (Math.floor((x + 0.66) / 0.115) + Math.floor(y / 0.115)) % 2 ? C.acc : C.body;
+      case 'diamond': return (Math.floor(((x + 0.66) + y) / 0.15) + Math.floor(((x + 0.66) - y) / 0.15)) % 2 ? C.acc : C.body;
+      case 'sash': return Math.abs((y - 1.18) + x * 0.9) < 0.085 ? C.acc : C.body;
+      case 'halves': return x < 0 ? C.body : C.acc;
+      case 'dots': {
+        const cx = ((x + 0.66) / 0.14) % 1 - 0.5, cy = (y / 0.14) % 1 - 0.5;
+        return (cx * cx + cy * cy) < 0.058 ? C.acc : C.body;
+      }
+      default: return C.body;
+    }
+  };
+  const { geo, part, tris } = data;
+  const posA = geo.getAttribute('position'), uvA = geo.getAttribute('uv');
+  const V = [0, 0, 0].map(() => ({ u: 0, v: 0, x: 0, y: 0, p: [0, 0, 0] }));
+  for (const [a, b, c] of tris) {
+    const ids = [a, b, c];
+    for (let k = 0; k < 3; k++) {
+      const i = ids[k];
+      V[k].u = uvA.getX(i) * S; V[k].v = (1 - uvA.getY(i)) * S;
+      V[k].x = posA.getX(i); V[k].y = posA.getY(i);
+      V[k].p = [0, 0, 0]; V[k].p[part[i]] = 1;
+    }
+    const den = (V[1].v - V[2].v) * (V[0].u - V[2].u) + (V[2].u - V[1].u) * (V[0].v - V[2].v);
+    if (Math.abs(den) < 1e-9) continue;
+    const minU = Math.max(0, Math.floor(Math.min(V[0].u, V[1].u, V[2].u))), maxU = Math.min(S - 1, Math.ceil(Math.max(V[0].u, V[1].u, V[2].u)));
+    const minV = Math.max(0, Math.floor(Math.min(V[0].v, V[1].v, V[2].v))), maxV = Math.min(S - 1, Math.ceil(Math.max(V[0].v, V[1].v, V[2].v)));
+    for (let vv = minV; vv <= maxV; vv++) for (let uu = minU; uu <= maxU; uu++) {
+      const w0 = ((V[1].v - V[2].v) * (uu - V[2].u) + (V[2].u - V[1].u) * (vv - V[2].v)) / den;
+      const w1 = ((V[2].v - V[0].v) * (uu - V[2].u) + (V[0].u - V[2].u) * (vv - V[2].v)) / den;
+      const w2 = 1 - w0 - w1;
+      if (w0 < -0.001 || w1 < -0.001 || w2 < -0.001) continue;
+      const x = w0 * V[0].x + w1 * V[1].x + w2 * V[2].x;
+      const y = w0 * V[0].y + w1 * V[1].y + w2 * V[2].y;
+      const p0 = w0 * V[0].p[0] + w1 * V[1].p[0] + w2 * V[2].p[0];
+      const p1 = w0 * V[0].p[1] + w1 * V[1].p[1] + w2 * V[2].p[1];
+      const p2 = w0 * V[0].p[2] + w1 * V[1].p[2] + w2 * V[2].p[2];
+      const col = p1 >= p0 && p1 >= p2 ? C.slv : p2 >= p0 ? C.cap : patBody(x, y);
+      const o = (vv * S + uu) * 4;
+      px[o] = col[0]; px[o + 1] = col[1]; px[o + 2] = col[2]; px[o + 3] = 255;
+      filled[vv * S + uu] = 1;
+    }
+  }
+  // シーム対策: 未充填 texel を近傍色で2回膨張させる
+  for (let pass = 0; pass < 2; pass++) {
+    const add = [];
+    for (let vv = 0; vv < S; vv++) for (let uu = 0; uu < S; uu++) {
+      const i = vv * S + uu;
+      if (filled[i]) continue;
+      const nb = [uu > 0 ? i - 1 : -1, uu < S - 1 ? i + 1 : -1, vv > 0 ? i - S : -1, vv < S - 1 ? i + S : -1].find(n => n >= 0 && filled[n]);
+      if (nb !== undefined && nb >= 0) add.push([i, nb]);
+    }
+    for (const [i, nb] of add) {
+      px.set(px.subarray(nb * 4, nb * 4 + 4), i * 4);
+      filled[i] = 1;
+    }
+    if (!add.length) break;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  silksTexCache.set(key, tex);
+  return tex;
+}
+
 /* ---------- 馬＋騎手の組み立て（1人用 makeModelHorse を移植） ----------
    座標系の違い: 1人用は bodyG 内で馬が -z 向き、マルチ版は +z 向き。
    そのため固定オフセットの z 符号だけを反転し、ボーンローカルの値
@@ -1433,9 +1553,23 @@ function makeModelHorse(horseId, num) {
     o.frustumCulled = false;
     o.material = o.material.clone();
     if (o.material.name === 'Coat') {
-      o.material.color.setRGB(clamp(tint.r / 0.235, 0.15, 3.4), clamp(tint.g / 0.179, 0.15, 3.4), clamp(tint.b / 0.135, 0.15, 3.4));
+      // フェーズ27: 除数を実測の実効ベース色に合わせた。毛皮テクスチャは
+      // ほぼ白（平均 sRGB 0.94）で、色は頂点色が決める。頂点色の胴体部
+      // （輝度0.02〜0.30）の平均は (0.168, 0.043, 0.012) で、テクスチャの
+      // 線形平均 (0.86, 0.85, 0.83) との積 (0.145, 0.037, 0.010) が実効
+      // ベース。旧除数 (0.235, 0.179, 0.135) では特に青が 1/4.7 しか
+      // 乗らず、芦毛・白毛が通常の鹿毛に潰れていた。
+      o.material.color.setRGB(clamp(tint.r / 0.145, 0.05, 60), clamp(tint.g / 0.037, 0.05, 60), clamp(tint.b / 0.010, 0.05, 60));
+      // 明るい毛色では頂点色の暗点（脚・鼻先、輝度<0.02）が残りすぎて
+      // 白馬の脚だけ黒く見えるため、目標色の明るさに応じて emissive で
+      // 持ち上げ、暗点のコントラストを圧縮する（暗い毛色では無効）。
+      const lumT = 0.2126 * tint.r + 0.7152 * tint.g + 0.0722 * tint.b;
+      const lift = clamp((lumT - 0.30) * 0.45, 0, 0.22);
+      if (lift > 0) o.material.emissive.setRGB(tint.r * lift, tint.g * lift, tint.b * lift);
     } else if (o.material.name === 'Hair') {
-      o.material.color.setRGB(clamp(maneTint.r / 0.315, 0.12, 3.2), clamp(maneTint.g / 0.315, 0.12, 3.2), clamp(maneTint.b / 0.315, 0.12, 3.2));
+      // たてがみ/尾も同様: テクスチャ平均 0.83 × 頂点色平均 (0.012, 0.008,
+      // 0.006) が実効ベース。旧除数 0.315 では全頭ほぼ黒になっていた。
+      o.material.color.setRGB(clamp(maneTint.r / 0.0078, 0.05, 200), clamp(maneTint.g / 0.0052, 0.05, 200), clamp(maneTint.b / 0.0038, 0.05, 200));
     }
   });
   bodyG.add(horseScene); // モデルは素で +z 向き（マルチ版の進行方向と一致、回転なし）
@@ -1542,7 +1676,14 @@ function makeModelHorse(horseId, num) {
       if (o.isMesh) {
         o.castShadow = true; o.frustumCulled = false;
         o.material = o.material.clone();
-        if (o.material.name === 'jockeySilks') { o.material.color.set(def.jock); o.material.roughness = 0.85; }
+        if (o.material.name === 'jockeySilks') {
+          // フェーズ27: 単色ベタから、部位別カラー＋模様の生成テクスチャへ
+          const tex = silksTextureFor(def);
+          if (tex) { o.material.map = tex; o.material.color.set(0xffffff); }
+          else o.material.color.set(def.jock);
+          o.material.roughness = 0.85;
+          o.material.needsUpdate = true;
+        }
       }
     });
     // モデルは素で +z 向き（馬と同じ向き）。1人用は -z の世界に合わせて π 回していた
@@ -2349,7 +2490,7 @@ const PACE = {
   pushL: { mul: 1.19,  stam: -3.0 },
 };
 const STYLE_PROFILE = {
-  nige:   { early: 1.030, mid: 1.004, kick: 0.986, kickFrom: 330 },
+  nige:   { early: 1.030, mid: 1.004, kick: 1.004, kickFrom: 330 }, // kick はフェーズ26で 0.986→1.004: 末脚の伸びは無いが中盤の速さは維持（下記 server.js と同値）
   senko:  { early: 1.014, mid: 1.006, kick: 1.010, kickFrom: 430 },
   sashi:  { early: 0.990, mid: 1.000, kick: 1.032, kickFrom: 480 },
   oikomi: { early: 0.977, mid: 0.994, kick: 1.050, kickFrom: 400 },
@@ -3177,7 +3318,7 @@ function smoothRunner(r, dt, now) {
   r.smoothLane += (tLane - r.smoothLane) * Math.min(1, dt * 6);
   r.animSpeed = dt > 0 ? (r.smoothDist - prev) / dt : 0;
 }
-let frameTimeScale = 1; // 自馬の時計の倍率（接戦スロー 0.68。通常 1）。脚アニメを物理と同じ時計で進めるために updateMeshes へ渡す
+let frameTimeScale = 1; // 自馬の時計の倍率（フェーズ26で接戦スロー廃止のため常に1）。脚アニメを物理と同じ時計で進めるために updateMeshes へ渡す
 function raceLoop(now) {
   if (!racing) return;
   requestAnimationFrame(raceLoop);
@@ -3189,14 +3330,16 @@ function raceLoop(now) {
      一致させる。描画・補間・カメラは従来どおりフレームに1回だけ。
      サーバー時刻で進むNPCとの進み方の差もこれで消える。 */
   const rawDt = Math.min(1.2, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
-  // スローモーション（1人用: ゴール前70mで接戦なら0.68倍。自機の物理にのみ適用する近似）
-  let timeScale = 1;
-  if (!watchMode && !myFinished && RACE_DIST - myDist < 70) {
-    let close = false;
-    runners.forEach((r, n) => { if (n !== myName && Math.abs(r.dist - myDist) < 4) close = true; });
-    if (close) timeScale = 0.68;
-  }
-  frameTimeScale = timeScale; // 自馬の脚アニメ（updateMeshes）も同じ時計で進める（1人用は sdt に timeScale を含めて全部を駆動する）
+  /* 接戦スローモーションはマルチ版では廃止（フェーズ26）:
+     1人用はゴール前70m・接戦で sdt を 0.68 倍にするが、あちらは全馬が同じ
+     時計で一緒に遅くなるため相対速度は変わらない。マルチ版では NPC が
+     サーバー実時間で進む一方、自馬の物理だけが 0.68 倍の時計で進み、
+     ラスト70mの実時間が 3.53s→5.20s に伸びて同速の相手に約32m分
+     置いていかれる「実減速」になっていた（スタミナ無関係・接戦＝順位を
+     争う場面ほど必ず発動）。演出より実害が大きいため timeScale は常に1。
+     ゴール後の流し減速は従来どおり stepPhysics の myFinished 分岐のみ。 */
+  const timeScale = 1;
+  frameTimeScale = timeScale; // 自馬の脚アニメ（updateMeshes）も同じ時計で進める
   if (watchMode) {
     raceClock += rawDt;
     // 観戦: 全頭リモート補間のみ。スキップボタンの表示条件は1人用と同じ
@@ -3639,9 +3782,8 @@ function updateMeshes(dt) {
         // フェーズ19: 1人用 stepHorse と同一の時計駆動に戻す:
         //   mixer.update(dt × (0.12 + sf×1.05))
         // 巡航では 2.34歩/s（sf=1）となり、世界スケール是正（1.000）と合わせて
-        // 画面上の歩幅が1人用と一致する。自馬は物理と同じ時計（スローモーション
-        // 時は frameTimeScale=0.68 込み）で進めるので、世界と脚が一緒に遅れる
-        // 1人用の構造になる。他馬はサーバー時刻で進むため実時間 dt のまま。
+        // 画面上の歩幅が1人用と一致する。自馬は物理と同じ時計（frameTimeScale、
+        // フェーズ26以降は常に1）で進める。他馬はサーバー時刻で進むため実時間 dt のまま。
         const mdt = isMe ? dt * frameTimeScale : dt;
         anim.mixer.update(mdt * (0.12 + sfH * 1.05));
       } else {
