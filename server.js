@@ -95,6 +95,19 @@ function normalizePlayer(p) {
   }
   // 初期解放の保証マージ: 現在のスターターを合算するだけ（削除は一切しない）
   for (const id of CAT.STARTER_IDS) if (!p.unlocked.includes(id)) p.unlocked.push(id);
+  /* 残高フロア移行（フェーズ23）: 初期所持金10,000G化（フェーズ22）は新規登録
+     のみ適用だったため、既存プレイヤーの残高が増えていなかった。一度きりの
+     移行措置として、フラグ（balanceFloorV1）が無いプレイヤーに限り、残高が
+     初期所持金未満なら初期所持金まで引き上げる（10,000G以上は金額不変で
+     フラグだけ立てる）。フラグは残高と一緒に永続化されるため、その後に
+     賭け等で10,000Gを下回っても再び底上げされることはなく、無限付与には
+     ならない。残高が尽きた場合の恒常的な受け皿は従来の破産救済
+     （100G未満で500Gを請求）が担う。減らす処理は一切しない。 */
+  if (!p.balanceFloorV1) {
+    p.balanceFloorV1 = 1;
+    const bal = Number(p.balance);
+    if (!Number.isFinite(bal) || bal < CAT.INITIAL_BALANCE) p.balance = CAT.INITIAL_BALANCE;
+  }
   return p;
 }
 function bumpCounter(p, key, by = 1) { p.counters[key] = (p.counters[key] || 0) + by; }
@@ -1257,10 +1270,11 @@ if (require.main === module) (async () => {
     let merged = 0;
     for (const k of Object.keys(players)) {
       const before = (players[k].unlocked || []).length;
-      normalizePlayer(players[k]); // 旧データに拡張フィールドを補い、初期解放の保証マージを適用
-      if ((players[k].unlocked || []).length !== before) merged++;
+      const balBefore = players[k].balance;
+      normalizePlayer(players[k]); // 旧データに拡張フィールドを補い、初期解放の保証マージ＋残高フロア移行を適用
+      if ((players[k].unlocked || []).length !== before || players[k].balance !== balBefore) merged++;
     }
-    if (merged > 0) { persistAll(); console.log(`[store] 初期解放の保証マージを ${merged} 件に適用し保存しました`); }
+    if (merged > 0) { persistAll(); console.log(`[store] 起動時移行（初期解放マージ／残高フロア）を ${merged} 件に適用し保存しました`); }
     console.log(`[store] 保存先: ${store.describe()}（プレイヤー ${Object.keys(players).length} 件を読み込み）`);
   } catch (e) {
     // DATABASE_URL の設定ミス等で保存先が使えない場合は、データを守るため起動を止めて気づけるようにする
