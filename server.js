@@ -20,7 +20,7 @@ const CAT = require('./catalog');
    混在状態のまま公開され、1200m指定が旧カタログの距離リストに無く黙って2000mに
    化けた。/health と認証応答でこの値を返し、クライアントが不一致を検出して
    画面に警告を出すことで、混在デプロイを即座に可視化する。 */
-const BUILD_VERSION = 'phase35';
+const BUILD_VERSION = 'phase36';
 /* 距離の受理: 数値化してから判定する（文字列 "1200" 等の型違いを黙って
    2000m に化けさせない）。不正値のフォールバック時はログに残す。 */
 function validDistance(v) {
