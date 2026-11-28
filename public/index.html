@@ -40,6 +40,10 @@
   .distChips button { flex:1; min-width:96px; background:linear-gradient(180deg,#5d7f95,#45677c); border-radius:16px; padding:12px 10px; }
   .distChips button.sel { background:linear-gradient(180deg,#5cc465,#34a24b); outline:2px solid #ffd54f; }
   .distChips button small { display:block; font-size:11px; opacity:.85; }
+  #lobbyDistChips { display:flex; gap:8px; flex-wrap:wrap; }
+  #lobbyDistChips button { flex:1; min-width:70px; background:linear-gradient(180deg,#5d7f95,#45677c); border-radius:16px; padding:12px 10px; }
+  #lobbyDistChips button.sel { background:linear-gradient(180deg,#5cc465,#34a24b); outline:2px solid #ffd54f; }
+  #lobbyDistChips button:disabled { opacity:.8; }
   .modeBtns button { width:100%; font-size:17.5px; padding:15px 14px; margin:7px 0; border-radius:16px; }
   /* 馬選び（パドック風） */
   #previewWrap { background:linear-gradient(#87b5d9 62%, #5d8a3c 62%); border-radius:14px; overflow:hidden; }
@@ -175,6 +179,7 @@
     #gateTrack { position:relative; height:26px; margin:12px 0 6px; background:linear-gradient(90deg,#e53935,#ff7043 26%,#ffb74d 40%,#4fc3f7 46.5%,#ffd54f 50%,#4fc3f7 53.5%,#ffb74d 60%,#ff7043 74%,#e53935); border-radius:13px; overflow:hidden; box-shadow:inset 0 2px 5px rgba(0,0,0,.35); }
     #gateNeedle { position:absolute; top:-2px; width:4px; height:30px; background:#fff; border-radius:2px; box-shadow:0 0 10px #ffd54f,0 0 4px #fff; left:0; }
     #gateResult { min-height:22px; font-weight:900; font-size:15px; }
+    #gateWait { min-height:18px; font-size:12.5px; font-weight:700; color:#bcd7ff; }
     #gateUI button { width:100%; margin-top:8px; padding:13px; font-size:16px; }
     .tag { display:inline-block; border-radius:999px; padding:3px 10px; font-size:11.5px; font-weight:800; background:rgba(20,32,44,.72); color:#e8f4ff; border:1px solid rgba(255,255,255,.28); }
     .tag.foul-bad { background:rgba(160,30,30,.85); }
@@ -325,10 +330,17 @@
 <div class="panel hidden" id="screenLobby">
   <h1>ロビー</h1>
   <div class="card">部屋コード: <span class="code" id="roomCode"></span><br>友達にこのコードを送ってね。全員の準備OKでスタート（最大8人＋NPCで18頭立て）。</div>
-  <div class="card" id="lobbyMeta" style="font-size:13px"></div>
+  <button id="btnReady" style="width:100%;font-size:17px;padding:14px">準備OK</button>
+  <div class="card" id="lobbyMeta" style="font-size:15px;font-weight:800"></div>
+  <div class="card">
+    <div style="font-weight:800;margin-bottom:6px">🏁 距離（ステージ）</div>
+    <div id="lobbyDistChips">
+      <button data-dist="1200" type="button">1200m</button><button data-dist="1600" type="button">1600m</button><button data-dist="2000" type="button">2000m</button><button data-dist="2400" type="button">2400m</button>
+    </div>
+    <div id="lobbyDistNote" style="font-size:12px;color:#9fb6d8;margin-top:6px"></div>
+  </div>
   <div class="card" id="memberList"></div>
   <div id="lobbyPickerSlot"></div>
-  <button id="btnReady" style="width:100%">準備OK</button>
   <p class="err" id="lobbyErr"></p>
 </div>
 
@@ -384,6 +396,7 @@
     <div class="g-title">⏱ ゲートのタイミング！針が真ん中（金色）で押して！</div>
     <div id="gateTrack"><div id="gateNeedle"></div></div>
     <div id="gateResult"></div>
+    <div id="gateWait"></div>
     <button id="btnGate">ゲート開け！</button>
   </div>
   <div id="replayBar">
@@ -511,7 +524,7 @@ document.addEventListener('contextmenu', e => {
    「画面フェーズ25×サーバーフェーズ24」の混在状態が公開され、1200mが2000mに
    化ける・新機能が無い、という事故になった。起動時に /health の version と
    照合し、不一致なら警告バナーを出して無言の劣化を防ぐ。 */
-const CLIENT_BUILD = 'phase34';
+const CLIENT_BUILD = 'phase35';
 function checkServerVersion(serverVersion) {
   if (!serverVersion || serverVersion === CLIENT_BUILD) return;
   const el = $('verWarn');
@@ -903,6 +916,7 @@ function connectWs() {
       const viewingResult = !$('screenResult').classList.contains('hidden') || replayMode;
       if (!soloMode && !viewingResult) renderLobby(m.room);
     }
+    else if (m.type === 'gateTiming') { startGateTimingPhase(m); }
     else if (m.type === 'countdown') { startCountdown(m); }
     else if (m.type === 'raceStart') { beginRace(m.field, m.meta); }
     else if (m.type === 'state') { applyState(m.runners); }
@@ -1156,11 +1170,27 @@ function renderLobby(room) {
   $('memberList').innerHTML = room.players.map(p =>
     `<div>${p.connected ? '🟢' : '⚪'} ${p.nickname} — ${p.horseName} ${p.ready ? '✅準備OK' : '…準備中'}</div>`).join('');
   $('btnReady').textContent = me && me.ready ? '準備を取り消す' : '準備OK';
+  /* 距離（ステージ）選択（フェーズ35追加）: 現在の距離を全員にはっきり見せ、
+     ホストだけが変更できる。変更はサーバー経由で全員へ即時反映される。 */
+  const isHost = !!room.owner && room.owner === myName;
+  const canSetDist = isHost && room.mode !== 'watch';
+  document.querySelectorAll('#lobbyDistChips button').forEach(b => {
+    b.classList.toggle('sel', Number(b.dataset.dist) === room.distance);
+    b.disabled = !canSetDist;
+  });
+  $('lobbyDistNote').textContent = room.mode === 'watch'
+    ? '観戦レースの距離は変更できません'
+    : canSetDist
+      ? 'ホストはここで距離を変更できます（変更すると全員の準備がリセットされます）'
+      : `いまの距離は ${room.distance}m。距離はホスト（${room.owner || '—'}）が決めます`;
 }
 $('btnReady').onclick = () => {
   const me = roomState && roomState.players.find(p => p.nickname === myName);
   send({ type: 'ready', ready: !(me && me.ready) });
 };
+document.querySelectorAll('#lobbyDistChips button').forEach(b => {
+  b.onclick = () => { send({ type: 'setDistance', distance: Number(b.dataset.dist) }); sfx('click'); };
+});
 
 /* ---------- ミッション / ランキング / 記録（1人用 App.tsx の画面を移植） ---------- */
 function showSub(id) {
@@ -2740,6 +2770,7 @@ let slipActive = false, myHorseDef = null, myStyleKey = 'senko', myDayForm = 1;
 let lastCommentAt = 0, lastLeader = '', barDots = new Map(), raceClock = 0, sendAcc = 0;
 /* 1人用移植: ゲート/反則/写真判定/リプレイ/観戦カメラの状態 */
 let myGateT = 0, gatePending = null, gateT0 = 0, gatePressed = false, gateRaf = 0;
+let gatePhase = false, gatePhaseEndsAt = 0; // ゲートタイミング合わせ中か＋自動確定の目安時刻（フェーズ35）
 let foulCount = 0, contactT = 0, selfFoulCd = 0;
 const foulCdMap = new Map(); // nickname -> その相手への反則クールダウン残り秒（1人用 o.foulCd と同一）
 let finishTimes = new Map(); // nickname -> サーバー確定ゴール時刻(秒)。runnerFinished で届く
@@ -2751,6 +2782,7 @@ let replayMode = false, replayT = 0, replaySpeed = 1, replayLast = 0;
    （約5レースに1回）、馬身換算では約2馬身以内。写真判定の閾値0.17秒より狭く、
    「写真判定の中でも特に際どい決着」だけを特別扱いする。 */
 const CLOSE_GAP_SEC = 0.12;
+const CLOSE_START_REMAIN_M = 350; // 僅差リプレイの開始位置: 勝ち馬の残り距離がこの値になった地点から（フェーズ35。従来はゴール14秒前≒残り約240m）
 let closeInfo = null;      // { gap, term, first, second }（standings の1・2着。time はサーバー確定時刻）
 let closeMode = false;     // 僅差リプレイ再生中
 let closePhase = 'run';    // run（1倍速）→ slow（0.3倍速）→ freeze（静止）→ photo（写真判定絵）
@@ -2759,6 +2791,7 @@ let closeFreezeUntil = 0, closePhotoUntil = 0; // 実時間(ms)の期限
 let closeFreezeMs = 1700, closePhotoMs = 2400; // フリーズ/写真の表示時間（検証用フックでのみ変更可）
 let closeCaptionKey = '';  // 実況キャプションの出し分けキー
 let closeAutoDone = false; // 自動再生は1レース1回だけ
+let closeStartRemainM = null; // 再生開始時点の勝ち馬の残り距離（実フレーム実測。検証用）
 let gateGroup = null, gateDoors = [], gateTow = 0, dirtMatRef = null;
 let gateDoorOpen = 0, gateDoorTarget = 0; // 前扉の開き具合 0=閉 → 1=全開（1人用と同じ0.45秒で開く）
 let watchFocusNick = null; // 観戦HUDの対象（買い目の馬 or 先頭）
@@ -2839,7 +2872,8 @@ function applyRaceMeta(meta) {
   setMark(marks[2], (d - 400) / d);
   positionGate();
 }
-function startCountdown(m) {
+/* レース画面の準備（カウントダウン／タイミング合わせ共通） */
+function prepareRaceView(m) {
   initThree();
   pendingMeta = m.meta || pendingMeta;
   applyRaceMeta(pendingMeta);
@@ -2858,7 +2892,34 @@ function startCountdown(m) {
   document.querySelectorAll('#camBar button').forEach(b => b.classList.toggle('on', b.dataset.cam === 'auto'));
   racing = false;
   modelReady.then(() => setupField(m.field)); // 騎手GLB未読込のまま仮馬で組まない
-  if (!watchMode) showGateUI();
+}
+/* ゲートタイミング合わせフェーズ（フェーズ35・部屋レースのみ）:
+   準備OKが揃っても即カウントダウンには入らず、まず全員がタイミングバーを
+   入力する。サーバーが全員分（または制限時間で自動確定）を受け付けたら
+   countdown が届くので、ここではカウントダウン表示は出さない。 */
+function startGateTimingPhase(m) {
+  prepareRaceView(m);
+  watchMode = false;
+  gatePhase = true;
+  gatePhaseEndsAt = Date.now() + (m.timeoutSec || 12) * 1000;
+  $('countdown').classList.add('hidden');
+  showGateUI();
+}
+function startCountdown(m) {
+  prepareRaceView(m);
+  if (!watchMode) {
+    const myGate = m.gate && m.gate[myName];
+    if (gatePhase && gatePressed && gatePending) {
+      // タイミング合わせで入力済み: 自分の判定を保持し、UIは閉じる（再入力させない）
+      $('gateUI').classList.add('hidden');
+    } else if (gatePhase && myGate) {
+      // 制限時間切れで自動確定された自分の結果をサーバーから受け取って適用する
+      gatePending = { gateT: myGate.gateT, boost: myGate.boost };
+      gatePressed = true;
+      $('gateUI').classList.add('hidden');
+    } else showGateUI(); // ソロ・観戦（従来フロー）: カウントダウン中にタイミング入力
+    gatePhase = false;
+  }
   /* カウントダウン（フェーズ22で根本修正）: 以前は #countdown の CSS が
      display:none 固定で、JS の .hidden 付け外しが効かず数字が一切表示されて
      いなかった（実測: textContent="3" でも computed display は none）。
@@ -2897,7 +2958,7 @@ function setupField(field) {
   finishTimes = new Map(); flashDone = false; photoShownAt = 0; photoActive = false;
   crowdStop(); // フェーズ30: 前レースの歓声が残っていたら止める（beginRace で改めて開始）
   replayFrames = []; replayAcc = 0; gateTow = 0; myGateT = 0;
-  closeInfo = null; closeMode = false; closeAutoDone = false; closePhase = 'run';
+  closeInfo = null; closeMode = false; closeAutoDone = false; closePhase = 'run'; closeStartRemainM = null;
   $('foulTag').textContent = '反則 0回'; $('foulTag').classList.remove('foul-bad');
   $('photoUI').style.display = 'none'; $('photoCanvas').style.display = 'none';
   $('foulBanner').style.display = 'none';
@@ -3218,12 +3279,21 @@ function gateNeedlePos() {
 function showGateUI() {
   gatePressed = false; gatePending = null;
   $('gateResult').textContent = '';
+  $('gateWait').textContent = '';
   $('gateUI').classList.remove('hidden');
   gateT0 = performance.now();
   cancelAnimationFrame(gateRaf);
   const anim = () => {
     if ($('gateUI').classList.contains('hidden')) return;
     $('gateNeedle').style.left = `calc(${(gateNeedlePos() * 100).toFixed(1)}% - 2px)`;
+    /* タイミング合わせ中は「全員の入力待ち」状況と自動確定までの目安を表示する */
+    if (gatePhase) {
+      const ps = (roomState && roomState.players) || [];
+      const done = ps.filter(p => p.gateDone).length;
+      $('gateWait').textContent = gatePressed
+        ? `✅ 入力完了！ 全員の入力を待っています（${done}/${ps.length}人）`
+        : `全員のタイミング入力待ち… あと約${Math.max(0, Math.ceil((gatePhaseEndsAt - Date.now()) / 1000))}秒で自動確定（${done}/${ps.length}人入力済み）`;
+    }
     gateRaf = requestAnimationFrame(anim);
   };
   anim();
@@ -3240,7 +3310,11 @@ function pressGate(auto) {
   const gr = $('gateResult');
   gr.textContent = txt; gr.style.color = col;
   sfx(err <= 0.15 ? 'beep' : 'click');
-  setTimeout(() => $('gateUI').classList.add('hidden'), auto ? 400 : 950);
+  /* タイミング合わせ中は自分の判定をサーバーへ送る（フェーズ35）。
+     サーバーは全員分が揃った時点でカウントダウンを始める。合わせ中は
+     結果表示のまま UI を残し、入力待ち状況（gateWait）を見せる。 */
+  if (gatePhase && !auto) send({ type: 'gateInput', gateT: gatePending.gateT, boost: gatePending.boost });
+  setTimeout(() => { if (!gatePhase) $('gateUI').classList.add('hidden'); }, auto ? 400 : 950);
 }
 $('btnGate').addEventListener('click', () => pressGate(false));
 
@@ -3499,19 +3573,21 @@ function closeFinishOf(standings) {
   if (!(gap >= 0) || gap > CLOSE_GAP_SEC + 1e-9) return null; // 1e-9 は時刻差の浮動小数点誤差の吸収
   return { gap, term: marginTerm(gap), first: a, second: b };
 }
-/* 勝ち馬（replayOrder の idx）が実フレーム上で決勝線を越えるリプレイ時刻を補間で求める */
-function replayCrossTime(idx) {
+/* replayOrder の idx が実フレーム上で target(m) に到達するリプレイ時刻を補間で求める */
+function replayTimeAtDist(idx, target) {
   const F = replayFrames;
   for (let i = 0; i < F.length; i++) {
-    if (F[i].d[idx] >= RACE_DIST) {
+    if (F[i].d[idx] >= target) {
       if (i === 0) return F[0].t;
       const a = F[i - 1], b = F[i];
-      const k = (RACE_DIST - a.d[idx]) / Math.max(0.0001, b.d[idx] - a.d[idx]);
+      const k = (target - a.d[idx]) / Math.max(0.0001, b.d[idx] - a.d[idx]);
       return a.t + (b.t - a.t) * clamp(k, 0, 1);
     }
   }
   return null;
 }
+/* 勝ち馬（replayOrder の idx）が実フレーム上で決勝線を越えるリプレイ時刻 */
+function replayCrossTime(idx) { return replayTimeAtDist(idx, RACE_DIST); }
 function replayCaption(text, big) {
   const el = $('commentary');
   el.textContent = text; el.style.display = 'block';
@@ -3527,7 +3603,14 @@ function startCloseReplay() {
   startReplay();
   closeMode = true; closePhase = 'run'; closeCaptionKey = '';
   closeTFinish = tF;
-  replayT = Math.max(replayFrames[0].t, tF - 14); // ゴール14秒前から
+  /* 開始位置（フェーズ35）: 従来の「ゴール14秒前」から、勝ち馬の残り距離が
+     CLOSE_START_REMAIN_M（350m）になった地点へ前倒し。最後の直線の
+     追い比べ全体を見せる。フレームが短く地点を特定できない場合だけ
+     従来の14秒前にフォールバックする。 */
+  const tStart = replayTimeAtDist(wi, RACE_DIST - CLOSE_START_REMAIN_M);
+  replayT = tStart != null ? tStart : Math.max(replayFrames[0].t, tF - 14);
+  const fr0 = replayFrameAt(replayT);
+  closeStartRemainM = fr0 ? +(RACE_DIST - fr0.d[wi]).toFixed(1) : null;
   $('btnReplaySpeed').textContent = '🎬 僅差リプレイ';
   replayCaption(`🔥 僅差リプレイ ― ${closeInfo.first.horseName} vs ${closeInfo.second.horseName}`);
   return true;
@@ -3546,6 +3629,8 @@ function updateCloseCaptions(fr) {
   if (remain <= 55 && gapM < 1.2) { key = 'dead'; text = '並んだ！！ 勝負はゴールまで分からない！'; }
   else if (remain <= 55) { key = 'r50'; text = '残り50m！'; }
   else if (remain <= 105) { key = 'r100'; text = '残り100m！ 決着は目前！'; }
+  else if (remain <= 205) { key = 'r200'; text = '残り200m！ 追い比べが始まった！'; }
+  else if (remain <= 305) { key = 'r300'; text = '残り300m！ 最後の直線勝負！'; }
   else { key = 'open'; text = `🔥 僅差リプレイ ― ${closeInfo.first.horseName} vs ${closeInfo.second.horseName}`; }
   if (key !== closeCaptionKey) { closeCaptionKey = key; replayCaption(text); }
 }
@@ -3561,19 +3646,23 @@ function showClosePhoto() {
   drawPhotoFinish([closeInfo.first, closeInfo.second].map(p => ({ horseName: p.horseName, horseId: p.horseId })), closeInfo.gap);
   const cm = $('commentary'); cm.classList.remove('big'); cm.style.display = 'none';
 }
-/* 僅差リプレイのカメラ: ゴール板の横・低い位置から2頭の真ん中を見る（slow以降） */
+/* 僅差リプレイのカメラ（フェーズ35で作り替え）: 従来の「ゴール板横の低い
+   位置」をやめ、2頭の中点の斜め上（横＋後方＋高さ約12m、見下ろし角およそ
+   35°）から追い続ける。2頭の位置関係と着差が上から一目で分かる画にする。
+   スロー区間（ゴール3.5秒前〜）では少し寄せて低くするが、斜め上は維持する。
+   run/slow/freeze/photo の全フェーズ共通。 */
 function closeCamera(fr) {
   const wi = replayOrder.indexOf(closeInfo.first.nickname);
   const si = replayOrder.indexOf(closeInfo.second.nickname);
   const a = trackPoint(fr.d[wi], fr.l[wi]), b = trackPoint(fr.d[si], fr.l[si]);
-  const midLane = (fr.l[wi] + fr.l[si]) / 2;
-  const fp = trackPoint(RACE_DIST, midLane);
-  const rx = -fp.dz, rz = fp.dx; // コース横方向（放送カメラと同じ流儀）
-  const k = clamp((replayT - (closeTFinish - 3.5)) / 3.5, 0, 1); // ゴールに向け少し寄る
-  const side = 12.5 - 3.2 * k, ahead = 7 - 2.5 * k;
-  camera.position.set(fp.x + rx * side + fp.dx * ahead, 1.7, fp.z + rz * side + fp.dz * ahead);
-  camera.lookAt((a.x + b.x) / 2, 1.25, (a.z + b.z) / 2);
-  if (camera.fov !== 50) { camera.fov = 50; camera.updateProjectionMatrix(); }
+  const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2; // 2頭の中点
+  const dx = a.dx, dz = a.dz;   // 進行方向（勝ち馬の向きで代表）
+  const rx = -dz, rz = dx;      // コース横方向
+  const k = clamp((replayT - (closeTFinish - 3.5)) / 3.5, 0, 1); // スローで少し寄る
+  const side = 13.5 - 3.5 * k, back = 11 - 3 * k, h = 12.5 - 3 * k;
+  camera.position.set(mx + rx * side - dx * back, h, mz + rz * side - dz * back);
+  camera.lookAt(mx + dx * 3.5, 0.6, mz + dz * 3.5);
+  if (camera.fov !== 55) { camera.fov = 55; camera.updateProjectionMatrix(); }
 }
 function replayLoop(now) {
   if (!replayMode) return;
@@ -3619,8 +3708,8 @@ function replayLoop(now) {
       anim.mixer.update(dt * (0.25 + clamp(estSpd / 17, 0, 1.15) * 1.0) * spd);
     }
   });
-  if (closeMode && closePhase !== 'run') {
-    closeCamera(fr); // ゴール板横の低いカメラ（slow/freeze/photo）
+  if (closeMode) {
+    closeCamera(fr); // 斜め上から2頭を見下ろすカメラ（全フェーズ共通・フェーズ35）
   } else {
     // 放送カメラで先頭を追う
     let li = 0; fr.d.forEach((v, i) => { if (v > fr.d[li]) li = i; });
@@ -4119,9 +4208,30 @@ if (new URLSearchParams(location.search).has('orbit') || new URLSearchParams(loc
       updateGuide();
       return $('guide').textContent;
     },
+    // 検証用（フェーズ35）: ロビー画面（準備ボタンの位置・距離チップの状態）
+    lobbyProbe: () => {
+      const rectOf = id => { const e = $(id); if (!e) return null; const b = e.getBoundingClientRect(); return { top: Math.round(b.top), bottom: Math.round(b.bottom) }; };
+      return {
+        btnReady: rectOf('btnReady'), memberList: rectOf('memberList'),
+        chips: [...document.querySelectorAll('#lobbyDistChips button')].map(b => ({ dist: b.dataset.dist, sel: b.classList.contains('sel'), disabled: b.disabled })),
+        meta: $('lobbyMeta').textContent, distNote: $('lobbyDistNote').textContent,
+        owner: roomState ? roomState.owner : null, distance: roomState ? roomState.distance : null,
+      };
+    },
+    // 検証用（フェーズ35）: ゲートタイミング合わせフェーズの状態
+    gateProbe: () => ({
+      gatePhase, gatePressed, gatePending: gatePending ? { ...gatePending } : null,
+      gateUiHidden: $('gateUI').classList.contains('hidden'),
+      gateWaitText: $('gateWait').textContent,
+      roomState: roomState ? roomState.state : null,
+      players: roomState ? roomState.players.map(p => ({ nickname: p.nickname, ready: p.ready, gateDone: p.gateDone })) : [],
+      countdownHidden: $('countdown').classList.contains('hidden'),
+      racing,
+    }),
     // 検証用（フェーズ28）: 僅差リプレイの状態
     closeProbe: () => ({
-      CLOSE_GAP_SEC, closeMode, closePhase, replayMode,
+      CLOSE_GAP_SEC, CLOSE_START_REMAIN_M, closeStartRemainM, closeMode, closePhase, replayMode,
+      camPos: camera ? { x: +camera.position.x.toFixed(1), y: +camera.position.y.toFixed(1), z: +camera.position.z.toFixed(1) } : null,
       replayT: +replayT.toFixed(2), closeTFinish: closeTFinish ? +closeTFinish.toFixed(2) : null,
       frames: replayFrames.length,
       closeInfo: closeInfo ? { gap: +closeInfo.gap.toFixed(3), term: closeInfo.term, first: closeInfo.first.nickname, second: closeInfo.second.nickname } : null,
