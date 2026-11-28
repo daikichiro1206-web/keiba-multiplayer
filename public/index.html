@@ -1263,21 +1263,31 @@ function applyRiderPose(root) {
     b.quaternion.copy(bind[name]).multiply(dq);
   }
 }
-/* 一人称専用の腕ポーズ追加分（フェーズ23）: 通常ポーズの手は腰の位置にあり、
-   一人称カメラ（騎手の目線）では画角の大きく下になって見えない。そこで
-   一人称の間だけ腕チェーンに追加回転をかけ、手が馬の首元・画角下部に
-   来るようにする。三人称（他人の騎手・リプレイ）には一切影響しない。
-   値は __km.fpArmTry で実測して決定: 手 sy≈1.40→0.87、sx は両手が首元
-   中央に寄る（手綱をまとめて持つ騎手の姿勢）。手綱のグリップは手ボーンの
-   実位置に毎フレーム追従するので、上げた手にも手綱が付いてくる。 */
+/* 一人称専用の腕ポーズ追加分（フェーズ23→24で見直し）: 通常ポーズの手は
+   腰の位置にあり、一人称カメラ（騎手の目線）では画角の大きく下になって
+   見えない。そこで一人称の間だけ腕チェーンに追加回転をかけ、手が馬の
+   首元・画角下部に来るようにする。三人称（他人の騎手・リプレイ）には
+   一切影響しない。
+   フェーズ23では両手を首元中央に寄せていたが、実機で「腕は左右に構える
+   感じ」との指摘を受け、フェーズ24で左右に離した構えに変更した。
+   値は __km.fpArmTry の試行と一人称スクリーンショットで決定: 上腕の
+   z 差分 ±0.5 で両手を首の左右に開き、手首を掌側へ倒して指を握らせると
+   「手綱を握る手」が首元下部の左右に収まる。手綱のグリップは手ボーンの
+   実位置に毎フレーム追従するので、離した手にも手綱が付いてくる。
+   一人称で描かれるのは前腕＋手だけ（buildFpArmMeshes）で、肘から先が
+   画面下端から首元へ伸びる構図になる。 */
 const RIDER_FP_ARM = {
-  LeftArm: [-0.8, 0, 0.72], RightArm: [-0.8, 0, -0.72],
-  LeftForeArm: [-1.5, 0, 0], RightForeArm: [-1.5, 0, 0],
+  LeftArm: [-0.8, 0, 0.5], RightArm: [-0.8, 0, -0.5],
+  LeftForeArm: [-1.45, 0, 0], RightForeArm: [-1.45, 0, 0],
+  // 手首を少し掌側に倒し、指を握らせて「手綱を握る手」にする（開いた掌が
+  // カメラを向く素のポーズのままだと、両手を突き出しているように見える）
+  LeftHand: [-0.45, 0, 0.2], RightHand: [-0.45, 0, -0.2],
+  FingerCurl: 0.8,
 };
 function applyRiderArmDelta(root, extra) {
   if (!root) return;
   const bind = riderBindQuats();
-  for (const name of ['LeftArm', 'RightArm', 'LeftForeArm', 'RightForeArm']) {
+  for (const name of ['LeftArm', 'RightArm', 'LeftForeArm', 'RightForeArm', 'LeftHand', 'RightHand']) {
     const b = root.getObjectByName(name);
     if (!b || !bind[name]) continue;
     const base = RIDER_POSE[name] || [0, 0, 0];
@@ -1285,6 +1295,94 @@ function applyRiderArmDelta(root, extra) {
     const dq = new THREE.Quaternion().setFromEuler(new THREE.Euler(base[0] + ex[0], base[1] + ex[1], base[2] + ex[2], 'XYZ'));
     b.quaternion.copy(bind[name]).multiply(dq);
   }
+  // 指の握り（フェーズ24）: 全指ボーンに同じ屈曲差分を掛ける（0で開いた手に戻る）
+  const curl = extra && typeof extra.FingerCurl === 'number' ? extra.FingerCurl : 0;
+  root.traverse(o => {
+    if (!o.isBone || !/^(Left|Right)Hand(Thumb|Index|Middle|Ring|Pinky)\d+$/.test(o.name) || !bind[o.name]) return;
+    const dq = new THREE.Quaternion().setFromEuler(new THREE.Euler(curl, 0, 0, 'XYZ'));
+    o.quaternion.copy(bind[o.name]).multiply(dq);
+  });
+}
+/* 一人称「腕のみ表示」用の関節インデックス（フェーズ24）: 騎手は単一の
+   スキンドメッシュのため、パーツ単位の表示/非表示ができない。腕チェーン
+   （肩〜指）のボーン番号をスケルトン順で返す。 */
+function riderArmJointIndices(skinnedMesh) {
+  if (!skinnedMesh || !skinnedMesh.skeleton) return [];
+  const out = [];
+  skinnedMesh.skeleton.bones.forEach((b, i) => {
+    if (/^(Left|Right)(Shoulder|Arm|ForeArm|Hand)/.test(b.name)) out.push(i);
+  });
+  return out;
+}
+/* 一人称メッシュ抽出用は前腕＋手だけに絞る: 上腕・肩まわりはカメラの
+   真下〜画面端に「引き伸ばされた刃状」で残りやすいため含めない。
+   肘の切り口は画面下端の外に来るので見た目に影響しない。 */
+function riderForeJointIndices(skinnedMesh) {
+  if (!skinnedMesh || !skinnedMesh.skeleton) return [];
+  const out = [];
+  skinnedMesh.skeleton.bones.forEach((b, i) => {
+    if (/^(Left|Right)(ForeArm|Hand)/.test(b.name)) out.push(i);
+  });
+  return out;
+}
+/* 一人称専用の「腕だけメッシュ」を作る（フェーズ24・ジオメトリ分割方式）:
+   騎手の各スキンドメッシュから、腕チェーンの影響が支配的な三角形だけを
+   抜き出した複製メッシュを作り、同じスケルトンに bind する。頂点属性は
+   だけ。シェーダ改変（discard）はテクスチャ付きマテリアルで微分が壊れて
+   市松状のノイズになったため使わない。全身メッシュ側は一人称の間だけ
+   colorWrite/depthWrite を切って不可視化する（影はデプスマテリアル経由
+   で全身のまま残る）。自騎手の初回一人称化のときだけ遅延生成する。 */
+function buildFpArmMeshes(vis) {
+  const made = [];
+  const sources = [];
+  vis.riderObj.traverse(o => { if (o.isSkinnedMesh && o.geometry) sources.push(o); });
+  for (const src of sources) {
+    const joints = riderForeJointIndices(src);
+    if (!joints.length) continue;
+    const armSet = new Set(joints);
+    const geo = src.geometry;
+    const ji = geo.getAttribute('skinIndex');
+    const wi = geo.getAttribute('skinWeight');
+    if (!ji || !wi) continue;
+    const armW = (vi) => {
+      let w = 0;
+      const js = [ji.getX(vi), ji.getY(vi), ji.getZ(vi), ji.getW(vi)];
+      const ws = [wi.getX(vi), wi.getY(vi), wi.getZ(vi), wi.getW(vi)];
+      for (let k = 0; k < 4; k++) if (armSet.has(js[k])) w += ws[k];
+      return w;
+    };
+    const idx = geo.getIndex();
+    const triCount = idx ? idx.count / 3 : ji.count / 3;
+    const newIdx = [];
+    for (let t = 0; t < triCount; t++) {
+      const a = idx ? idx.getX(t * 3) : t * 3;
+      const b = idx ? idx.getX(t * 3 + 1) : t * 3 + 1;
+      const c = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
+      // 重心（3頂点の平均）で判定しつつ、腕以外が支配的な頂点を含む三角形は
+      // 除外する。全頂点必須にすると前腕の袖などが細い帯状に欠けて棘の
+      // ように見え、逆に平均だけだと脇の下など「腕と胴体の境目」の三角形が
+      // ポーズで引き伸ばされて黒い刃状に化けるため、両条件を併用する
+      if ((armW(a) + armW(b) + armW(c)) / 3 >= 0.5 && Math.min(armW(a), armW(b), armW(c)) >= 0.3) newIdx.push(a, b, c);
+    }
+    if (!newIdx.length) continue;
+    const g2 = new THREE.BufferGeometry();
+    for (const name of Object.keys(geo.attributes)) g2.setAttribute(name, geo.attributes[name]);
+    g2.setIndex(newIdx);
+    const m2 = new THREE.SkinnedMesh(g2, src.material.clone());
+    m2.bind(src.skeleton, src.bindMatrix);
+    m2.position.copy(src.position);
+    m2.quaternion.copy(src.quaternion);
+    m2.scale.copy(src.scale);
+    m2.frustumCulled = false;
+    m2.castShadow = false;
+    m2.receiveShadow = false;
+    m2.visible = false;
+    m2.userData.kmFpArm = true;
+    src.parent.add(m2);
+    made.push(m2);
+  }
+  vis.fpArmMeshes = made;
+  return made;
 }
 /* レーシングヘルメット＋ゴーグル（1人用 makeJockeyHelmet を移植）。
    騎手モデルの Head ボーンに取り付ける装備品 */
@@ -3336,16 +3434,69 @@ if (new URLSearchParams(location.search).has('orbit') || new URLSearchParams(loc
       }
       return out;
     },
-    // 検証用（フェーズ23）: 一人称の腕ポーズ追加分を試行し、手の投影位置を返す
-    fpArmTry: (lx, lz, fx) => {
+    // 検証用（フェーズ23→24）: 一人称の腕ポーズ追加分を試行し、手の投影位置を返す
+    // （hx,hy,hz は手首の差分＝右手は z を反転、curl は指の握り量）
+    fpArmTry: (lx, lz, fx, hx = 0, hy = 0, hz = 0, curl = 0) => {
       const m = horseMeshes.get(myName);
       if (!m || !m.userData.vis || !m.userData.vis.riderObj) return null;
       applyRiderArmDelta(m.userData.vis.riderObj, {
         LeftArm: [lx, 0, lz], RightArm: [lx, 0, -lz],
         LeftForeArm: [fx, 0, 0], RightForeArm: [fx, 0, 0],
+        LeftHand: [hx, hy, hz], RightHand: [hx, hy, -hz],
+        FingerCurl: curl,
       });
       m.updateMatrixWorld(true);
       return window.__km.fpProbe();
+    },
+    // 検証用（フェーズ24）: 自騎手のパーツ切り分け（ボーンのスケール/マテリアル表示を個別に切り替える）
+    fpSetBoneScale: (name, s) => {
+      const m = horseMeshes.get(myName);
+      if (!m || !m.userData.vis || !m.userData.vis.riderObj) return false;
+      const b = m.userData.vis.riderObj.getObjectByName(name);
+      if (!b) return false;
+      b.scale.setScalar(s); return true;
+    },
+    fpSetMatVisible: (matName, v) => {
+      const m = horseMeshes.get(myName);
+      if (!m || !m.userData.vis || !m.userData.vis.riderObj) return false;
+      let n = 0;
+      m.userData.vis.riderObj.traverse(o => {
+        if (!o.isMesh) return;
+        (Array.isArray(o.material) ? o.material : [o.material]).forEach(mt => { if (mt.name === matName) { mt.visible = v; n++; } });
+      });
+      return n;
+    },
+    fpSetJockVisible: (v) => {
+      const m = horseMeshes.get(myName);
+      if (!m || !m.userData.vis) return false;
+      m.userData.vis.jock.visible = v; return true;
+    },
+    fpHideDust: (v) => { if (!dust || !dust.points) return false; dust.points.visible = !v; return true; },
+    // 検証用（フェーズ24診断）: 一人称の腕だけメッシュの表示切替
+    fpArmMeshVisible: (v) => {
+      const m = horseMeshes.get(myName);
+      if (!m || !m.userData.vis || !m.userData.vis.fpArmMeshes) return 0;
+      m.userData.vis.fpArmMeshes.forEach(am => { am.visible = v; });
+      return m.userData.vis.fpArmMeshes.length;
+    },
+    fpRiderShadow: (v) => {
+      const m = horseMeshes.get(myName);
+      if (!m || !m.userData.vis || !m.userData.vis.riderObj) return false;
+      m.userData.vis.riderObj.traverse(o => { if (o.isMesh) o.castShadow = v; });
+      return true;
+    },
+    // 検証用（フェーズ24）: 自騎手メッシュの構成と一人称「腕のみ表示」の状態
+    fpParts: () => {
+      const m = horseMeshes.get(myName);
+      if (!m || !m.userData.vis || !m.userData.vis.riderObj) return null;
+      const mats = new Set(); let meshCount = 0, armMeshCount = 0, armTris = 0, armVisible = 0, bodyWritable = 0;
+      m.userData.vis.riderObj.traverse(o => {
+        if (!o.isMesh) return; meshCount++;
+        if (o.userData.kmFpArm) { armMeshCount++; if (o.visible) armVisible++; const ix = o.geometry.getIndex(); armTris += (ix ? ix.count : 0) / 3; }
+        else if (o.material && o.material.colorWrite !== false) bodyWritable++;
+        (Array.isArray(o.material) ? o.material : [o.material]).forEach(mt => mats.add(mt.name + ':' + (mt.visible ? 1 : 0)));
+      });
+      return { meshCount, mats: [...mats], fpOn: !!m.userData.vis._fpOn, armMeshCount, armTris, armVisible, bodyWritable };
     },
     // 検証用: 名前タグの付与状況（人間の馬だけに付いているか・表示状態）
     nameTags: () => {
@@ -3546,19 +3697,34 @@ function orbitCamera(dist) {
     sunLight.target.position.set(p.x, 0, p.z);
   }
 }
-/* 一人称での自騎手の扱い（フェーズ23）: 従来は騎手ごと非表示だったが、
-   「腕が見えたら楽しい」との要望で、体は表示したまま視界を塞ぐ頭部だけを
-   消す方式に変えた。Head ボーンを極小スケールにすると頭＋ヘルメット
-   （Head の子）が潰れて見えなくなり、腕・袖・胴体は残る。腕は jock グループ
-   の歩様同期モーション（前傾・鐙の上下・コーナー内傾・ムチ時の前傾増し）
-   をそのまま受けるので、手綱を握る腕が揺れと一緒に画面下部で動く。
-   一人称でない場面（リプレイ）では必ず元に戻す。 */
+/* 一人称での自騎手の扱い（フェーズ23→24で再設計）: フェーズ23は頭だけを
+   極小スケールで消し胴体を残したため、前傾した胴体＋首が画面下部中央に
+   大きな塊（実機では太い円柱状）として残り視界を塞いだ。フェーズ24では
+   一人称の間、自騎手は「腕（肩〜手）と手綱だけ」を描く:
+   - 全身メッシュは colorWrite/depthWrite を切って描かない（頭・首・胴体・
+     脚・帽子・目まで全部消える。影はデプスマテリアル経由で全身のまま）
+   - 代わりに、腕チェーンの三角形だけを抜き出した複製メッシュ
+     （buildFpArmMeshes）を同じスケルトンで描く
+   腕は jock グループの歩様同期モーション（前傾・鐙の上下・コーナーの
+   内傾・ムチ時の前傾増し）をそのまま受けるので、手綱を握る腕が揺れと
+   一緒に画面下部の左右で動く。一人称でない場面（リプレイ等）では
+   必ず元に戻す。 */
 function setOwnRiderFP(vis, fp) {
-  if (!vis) return;
+  if (!vis || !vis.riderObj) return;
   vis.jock.visible = true;
-  if (vis.riderHead) vis.riderHead.scale.setScalar(fp ? 0.001 : 1);
+  // 表示の切替は状態が変わった時だけ
+  if (vis._fpOn !== fp) {
+    vis._fpOn = fp;
+    if (fp && !vis.fpArmMeshes) buildFpArmMeshes(vis);
+    vis.riderObj.traverse(o => {
+      if (!o.isMesh) return;
+      if (o.userData.kmFpArm) { o.visible = fp; return; }
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const mt of mats) { if (mt) { mt.colorWrite = !fp; mt.depthWrite = !fp; } }
+    });
+  }
   // 腕ポーズの一人称差分は状態が変わった時だけ適用する（毎フレームの再計算を避ける）
-  if (vis.riderObj && vis._fpArm !== fp) {
+  if (vis._fpArm !== fp) {
     vis._fpArm = fp;
     applyRiderArmDelta(vis.riderObj, fp ? RIDER_FP_ARM : null);
   }
@@ -3578,9 +3744,10 @@ function updateCamera(dt) {
   const sf = clamp(mySpeed / 17, 0, 1.15); // 1人用 updateCamera と文字どおり同一の sf 定義（フェーズ19: ×1.2正規化をやめ1人用の式に統一）
   const bobA = Math.sin(myPhase - 0.55) * 0.05 * sf;
   const bobB = Math.pow(Math.max(0, Math.sin(myPhase - 0.55)), 2) * 0.05 * sf;
-  // 一人称: 馬の頭の少し後ろ・騎手の目線（1人用と同値）。自分の騎手は頭だけ
-  // 消して体を表示し、一人称専用に腕ポーズを上げて手綱を握る腕が見えるように
-  // する（フェーズ23。カメラ位置は1人用のまま変えない）
+  // 一人称: 馬の頭の少し後ろ・騎手の目線（1人用と同値）。自分の騎手は
+  // 腕と手綱だけを残して描き（フェーズ24）、一人称専用に腕ポーズを
+  // 変えて手綱を握る腕が首の左右に見えるようにする
+  // （カメラ位置は1人用のまま変えない）
   const camX = p.x - fwdX * 0.22, camZ = p.z - fwdZ * 0.22;
   camera.position.set(camX, 2.52 + bobA + bobB, camZ);
   const lookTarget = lookHeld ? (lookHeld === 'L' ? -1.05 : lookHeld === 'R' ? 1.05 : (lookYaw >= 0 ? 2.95 : -2.95)) : dragYaw;
@@ -3602,7 +3769,7 @@ function updateCamera(dt) {
     - (isCornerAt(myDist) ? 0.014 * sf : 0);
   const targetFov = 66 + sf * 7 + (paceKey === 'pushL' ? 2.5 : 0);
   if (Math.abs(camera.fov - targetFov) > 0.05) { camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 5); camera.updateProjectionMatrix(); }
-  // 自分の騎手は一人称では頭だけ消す（腕・袖・手綱が見える。フェーズ23）
+  // 自分の騎手は一人称では腕＋手綱だけ描く（頭・首・胴体は出さない。フェーズ24）
   const myMesh = horseMeshes.get(myName);
   if (myMesh) setOwnRiderFP(myMesh.userData.vis, true);
   // 太陽はプレイヤーに追随（影の範囲を常に馬群の上に保つ）。オフセットは
