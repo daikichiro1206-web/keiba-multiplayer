@@ -82,7 +82,8 @@
   #raceWrap #rankLabel { font-size:11px; letter-spacing:.08em; opacity:.9; }
   #raceWrap .meters { flex:1; max-width:520px; display:flex; flex-direction:column; gap:6px; }
   #raceWrap .meter-line { display:flex; align-items:center; gap:8px; font-size:12px; font-weight:700; }
-  #raceWrap .meter-line .tag { width:64px; text-align:right; text-shadow:0 1px 2px rgba(0,0,0,.6); flex:none; white-space:nowrap; }
+  /* 汎用 .tag（ピル装飾）がメーター行にも効いて各行が太る移植バグを遮断し、1人用どおりプレーンなテキストラベルにする */
+  #raceWrap .meter-line .tag { width:64px; text-align:right; text-shadow:0 1px 2px rgba(0,0,0,.6); flex:none; white-space:nowrap; background:none; border:none; border-radius:0; padding:0; color:#fff; }
   #raceWrap .bar { flex:1; height:14px; background:rgba(0,0,0,.55); border:1px solid rgba(255,255,255,.35); border-radius:7px; overflow:hidden; }
   #raceWrap .bar > i { display:block; height:100%; width:100%; border-radius:6px; transition:width .12s linear; }
   #raceWrap #stamFill { background:linear-gradient(90deg,#2fbf3f,#8be04e); }
@@ -106,7 +107,7 @@
   #raceWrap .dmk { position:absolute; top:-3px; width:2px; height:18px; background:#fff; }
   #raceWrap .dmk em { position:absolute; top:16px; left:50%; transform:translateX(-50%); font-style:normal; font-size:10px; font-weight:700; white-space:nowrap; color:#e8f2e8; text-shadow:0 1px 2px rgba(0,0,0,.7); }
   #raceWrap .dmk.fin em { transform:translateX(-92%); }
-  #raceWrap #raceBar { position:relative; height:10px; margin-top:26px; background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.25); border-radius:6px; }
+  #raceWrap #raceBar { position:relative; height:10px; margin-top:8px; background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.25); border-radius:6px; }
   #raceWrap #raceBar .dot { position:absolute; top:50%; width:11px; height:11px; border-radius:50%; transform:translate(-50%,-50%); border:2px solid #fff; }
   #raceWrap #raceBar .dot.me { width:15px; height:15px; border-color:var(--accent); z-index:2; }
   #raceWrap #raceBar .finish { position:absolute; right:2px; top:-4px; font-size:11px; }
@@ -187,15 +188,29 @@
     .kv { display:flex; justify-content:space-between; padding:7px 2px; border-bottom:1px solid #eee2c4; font-size:14px; }
     .kv b { font-weight:900; }
     #fadeBlack { position:fixed; inset:0; background:#000; opacity:0; pointer-events:none; transition:opacity .45s; z-index:60; }
+  /* スマホ幅: 1人用 game.css の @media (max-width:560px) の寸法に合わせてHUDを圧縮する
+     （フェーズ20: 実機で「画面の半分以上が隠れる」指摘への対応。数値は1人用と同値、
+      タグピルだけ折り返しを減らすため僅かに小さくする。タップ領域は54px以上を維持） */
   @media (max-width:560px){
     #raceWrap #rankNum { font-size:27px; }
+    #raceWrap #rankPlate { min-width:70px; padding:5px 6px; }
     #raceWrap #msgPlate { font-size:12px; max-width:26vw; }
-    #raceWrap .ctl { font-size:12.5px; min-height:56px; }
-    #raceWrap .ctl small { font-size:9px; }
-    #raceWrap .steer { width:52px; height:66px; font-size:20px; }
-    #raceWrap #commentary { bottom:146px; font-size:11.5px; }
-    #raceWrap #lookBar { bottom:94px; }
-    #raceWrap #distNum { font-size:34px; }
+    #raceWrap .meter-line .tag { width:52px; font-size:11px; }
+    #raceWrap .meter-val { width:52px; font-size:11px; }
+    #raceWrap .meters { gap:5px; padding:5px 8px; }
+    #raceWrap .tagrow #secTag, #raceWrap .tagrow #laneTag, #raceWrap .tagrow #slipTag, #raceWrap .tagrow #condTag, #raceWrap .tagrow #foulTag { font-size:10.5px; padding:1px 7px; }
+    #raceWrap .ctl { font-size:12px; min-height:54px; padding:4px 2px; }
+    #raceWrap .ctl small { font-size:8.5px; }
+    #raceWrap .steer { width:52px; height:64px; font-size:20px; }
+    #raceWrap #commentary { bottom:140px; font-size:11.5px; }
+    #raceWrap #lookBar { bottom:88px; }
+    #raceWrap .lookbtn { font-size:11.5px; padding:5px 10px; min-height:36px; }
+    #raceWrap #distBig { margin-top:6px; padding:5px 10px 16px; }
+    #raceWrap .db-label { font-size:13px; }
+    #raceWrap #distNum { font-size:31px; }
+    #raceWrap .db-unit { font-size:15px; }
+    #raceWrap #distSec { font-size:13.5px; margin-left:5px; }
+    #raceWrap #distTrack { margin-top:7px; }
   }
 </style>
 </head>
@@ -2226,7 +2241,7 @@ function startCountdown(m) {
 }
 function setupField(field) {
   initThree();
-  horseMeshes.forEach(m => scene.remove(m));
+  horseMeshes.forEach(m => { scene.remove(m); if (m.userData.nameTag) { m.userData.nameTag.material.map.dispose(); m.userData.nameTag.material.dispose(); } });
   horseMeshes.clear(); runners.clear(); barDots.forEach(d => d.remove()); barDots.clear();
   fieldSize = field.length;
   myDist = 0; myLat = 0; targetLat = 0; latVel = 0; mySpeed = 0; stamina = 100; myPhase = 0;
@@ -2264,6 +2279,8 @@ function setupField(field) {
     else { mesh = makeHorseMesh(0x8a5a2b); mesh.userData.fallback = true; }
     scene.add(mesh);
     horseMeshes.set(f.nickname, mesh);
+    // 人間のプレイヤーの馬にだけ頭上へ名前タグ（NPCには付けない）
+    if (!f.npc) { const tag = makeNameTag(f.nickname); mesh.add(tag); mesh.userData.nameTag = tag; }
     const p = trackPoint(0, f.lane);
     mesh.position.set(p.x, 0, p.z);
     mesh.rotation.y = Math.atan2(p.dx, p.dz);
@@ -2295,6 +2312,32 @@ function beginRace(field, meta) {
   lastFrame = performance.now();
   horseMeshes.forEach(m => setHorseAnim(m, 'Gallop'));
   requestAnimationFrame(raceLoop);
+}
+/* ---------- プレイヤー名タグ（フェーズ20: マルチ対戦で人間の馬の頭上にニックネーム） ----------
+   NPCには付けない。人間同士の見分け専用。スプライトなので常にカメラを向き、
+   遠方ではフェードして画面を散らかさない。自馬は一人称レース中は隠し（頭上が
+   画角に入って邪魔になるため）、リプレイ/俯瞰デバッグ時のみ出す。 */
+function makeNameTag(name) {
+  const fs = 46, padX = 26, H = 68;
+  const meas = document.createElement('canvas').getContext('2d');
+  meas.font = '900 ' + fs + 'px sans-serif';
+  const tw = Math.ceil(meas.measureText(name).width);
+  const c = document.createElement('canvas'); c.width = tw + padX * 2; c.height = H;
+  const g = c.getContext('2d');
+  if (g.roundRect) { g.beginPath(); g.roundRect(2, 2, c.width - 4, H - 4, 20); }
+  else { g.beginPath(); g.rect(2, 2, c.width - 4, H - 4); }
+  g.fillStyle = 'rgba(8,14,22,0.72)'; g.fill();
+  g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,0.55)'; g.stroke();
+  g.font = '900 ' + fs + 'px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = '#fff'; g.fillText(name, c.width / 2, H / 2 + 3);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthWrite: false }));
+  let w = 0.6 * c.width / H, h = 0.6;
+  if (w > 3.4) { w = 3.4; h = 3.4 * H / c.width; } // 長い名前でも横に伸びすぎないよう上限
+  sp.scale.set(w, h, 1);
+  sp.position.set(0, 3.02, 0); // 騎手の頭（約2.5m）の少し上
+  sp.renderOrder = 5;
+  return sp;
 }
 /* ---------- 看板（1人用 textSprite と同じ描き方: 塗装板の質感） ---------- */
 function makeBoardMesh(text, bg, fg, wide) {
@@ -2766,7 +2809,7 @@ function startReplay() {
   $('camBar').style.display = 'none'; $('controls').style.display = 'none'; $('lookBar').style.display = 'none';
   $('skipBtn').style.display = 'none'; $('watchExit').style.display = 'none';
   $('replayBar').style.display = 'flex';
-  horseMeshes.forEach(m => { if (m.userData.vis) m.userData.vis.jock.visible = true; m.userData.replayDist = null; setHorseAnim(m, 'Gallop'); });
+  horseMeshes.forEach(m => { if (m.userData.vis) m.userData.vis.jock.visible = true; if (m.userData.nameTag) { m.userData.nameTag.visible = true; m.userData.nameTag.material.opacity = 0.95; } m.userData.replayDist = null; setHorseAnim(m, 'Gallop'); });
   replayLast = performance.now();
   requestAnimationFrame(replayLoop);
 }
@@ -3158,6 +3201,22 @@ if (new URLSearchParams(location.search).has('orbit') || new URLSearchParams(loc
       horseMeshes.forEach(m => { const v = m.userData.vis; if (v) out.push({ z: +v.jock.position.z.toFixed(3), rz: +v.jock.rotation.z.toFixed(3), rx: +v.jock.rotation.x.toFixed(3) }); });
       return out;
     },
+    // 検証用: 名前タグの付与状況（人間の馬だけに付いているか・表示状態）
+    nameTags: () => {
+      const out = [];
+      runners.forEach((r, nick) => { const m = horseMeshes.get(nick); const t = m && m.userData.nameTag; out.push({ nick, npc: r.npc, hasTag: !!t, visible: t ? t.visible : null, opacity: t ? +t.material.opacity.toFixed(2) : null }); });
+      return out;
+    },
+    // 検証用: 名前タグの画面投影位置（画角内か・カメラ距離）
+    tagScreen: () => {
+      const out = [];
+      runners.forEach((r, nick) => { const m = horseMeshes.get(nick); const t = m && m.userData.nameTag; if (!t) return;
+        const w = new THREE.Vector3(); t.getWorldPosition(w);
+        const v = w.clone().project(camera);
+        out.push({ nick, visible: t.visible, opacity: +t.material.opacity.toFixed(2), camDist: +camera.position.distanceTo(w).toFixed(1), sx: +((v.x * 0.5 + 0.5) * innerWidth).toFixed(0), sy: +((-v.y * 0.5 + 0.5) * innerHeight).toFixed(0), inFrame: Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 && v.z < 1 });
+      });
+      return out;
+    },
     // 診断用: 1頭のミキサーを手動で1周期ステップし、Root位置とHips世界Yの系列を返す
     probeClip: () => {
       const m = [...horseMeshes.values()][0];
@@ -3216,6 +3275,16 @@ function updateMeshes(dt) {
     const p = trackPoint(d, lane);
     mesh.position.set(p.x, 0, p.z);
     mesh.rotation.y = Math.atan2(p.dx, p.dz);
+    // 名前タグ: 他人の馬は近距離ほど濃く・130m超で消す。自馬は一人称中は隠す
+    const nameTag = mesh.userData.nameTag;
+    if (nameTag) {
+      if (isMe) { nameTag.visible = replayMode || DEBUG_ORBIT; }
+      else if (camera) {
+        const dc = Math.hypot(camera.position.x - p.x, camera.position.z - p.z);
+        nameTag.visible = dc < 130;
+        if (nameTag.visible) nameTag.material.opacity = dc <= 40 ? 0.95 : Math.max(0.25, 0.95 * (1 - (dc - 40) / 90));
+      }
+    }
     const spd = isMe ? mySpeed : r.animSpeed;
     // 土煙の発生: 速度と周囲の密度に連動。自馬は控えめ＋後方から（視界を守る）
     if (dust && racing && spd > 5) {
