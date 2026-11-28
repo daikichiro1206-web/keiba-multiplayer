@@ -256,6 +256,9 @@
 </head>
 <body>
 
+<!-- バージョン不一致の警告（フェーズ32: 混在デプロイの可視化。通常は非表示） -->
+<div id="verWarn" class="hidden" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#b3261e;color:#fff;font-size:13px;line-height:1.5;padding:8px 12px;text-align:center;"></div>
+
 <!-- 所持金バー（ログイン後に常時表示） -->
 <div id="walletBar" class="hidden">
   <span id="walletName">—</span>
@@ -503,6 +506,22 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 document.addEventListener('contextmenu', e => {
   if (e.target.closest && e.target.closest('button, .horseCard, #raceWrap, .distChips, .filterAxis, .filterVals, #walletBar')) e.preventDefault();
 });
+/* ビルド識別子（フェーズ32）: サーバー(server.js の BUILD_VERSION)と一致させる。
+   2026-11-28、Render のデプロイがファイル別アップロード途中のコミットで止まり
+   「画面フェーズ25×サーバーフェーズ24」の混在状態が公開され、1200mが2000mに
+   化ける・新機能が無い、という事故になった。起動時に /health の version と
+   照合し、不一致なら警告バナーを出して無言の劣化を防ぐ。 */
+const CLIENT_BUILD = 'phase32';
+function checkServerVersion(serverVersion) {
+  if (!serverVersion || serverVersion === CLIENT_BUILD) return;
+  const el = $('verWarn');
+  if (!el) return;
+  el.textContent = `⚠ サーバーと画面のバージョンが一致していません（サーバー: ${serverVersion} / 画面: ${CLIENT_BUILD}）。更新が反映されていない可能性があるため、時間をおいて開き直してください。`;
+  el.classList.remove('hidden');
+  console.warn('[version] server=%s client=%s', serverVersion, CLIENT_BUILD);
+}
+fetch('/health').then(r => r.json()).then(j => checkServerVersion(j.version)).catch(() => {});
+
 let token = localStorage.getItem('km_token') || '';
 let profile = null, horses = [], ws = null, myName = '';
 let roomState = null;
@@ -639,6 +658,13 @@ function ensureAudio() {
   applyVol();
   if (audioCtx.state === 'suspended') audioCtx.resume();
 }
+/* iOS対策（フェーズ32）: AudioContext はユーザー操作の中で resume しないと
+   suspended のまま鳴らない。歓声(crowdStart)はサーバー起点のレース開始で
+   呼ばれるため、ジェスチャ外だと無音になり得る。どのタップでもアンロックを
+   試み、画面復帰時にも再開を試みる（歓声が「無い」事故の実装側対策）。 */
+window.addEventListener('pointerdown', () => ensureAudio(), { passive: true });
+window.addEventListener('touchend', () => ensureAudio(), { passive: true });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) ensureAudio(); });
 function applyVol() { if (masterGain) masterGain.gain.value = sndMute ? 0 : sndVol * 0.6; }
 function tone(freq, delay, dur, type = 'sine', vol = 0.25) {
   if (!audioCtx || sndMute) return;
@@ -861,7 +887,7 @@ function connectWs() {
   ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', token, roomCode: localStorage.getItem('km_room') || undefined }));
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
-    if (m.type === 'welcome') { profile = m.profile; horses = m.horses; refreshWallet(); }
+    if (m.type === 'welcome') { profile = m.profile; horses = m.horses; refreshWallet(); checkServerVersion(m.version); }
     else if (m.type === 'error') { $('homeErr').textContent = m.message; $('lobbyErr').textContent = m.message; }
     else if (m.type === 'room') { roomState = m.room; if (!soloMode) renderLobby(m.room); }
     else if (m.type === 'countdown') { startCountdown(m); }
