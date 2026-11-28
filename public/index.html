@@ -5,15 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>3D競馬ゲーム マルチプレイ</title>
 <style>
-  body { margin:0; font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Noto Sans JP",sans-serif; background:linear-gradient(180deg,#1d3c19 0%,#152d11 55%,#10240f 100%); background-attachment:fixed; color:#fff; font-size:15.5px; line-height:1.55; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Noto Sans JP",sans-serif; background:linear-gradient(180deg,#2f6427 0%,#21501a 55%,#173d12 100%); background-attachment:fixed; color:#fff; font-size:15.5px; line-height:1.55; -webkit-tap-highlight-color:transparent; }
   .panel { max-width:720px; margin:0 auto; padding:16px 18px 32px; }
   h1 { font-size:23px; margin:14px 0 12px; letter-spacing:.03em; }
-  input, select, button { font-size:16px; padding:11px 12px; margin:4px 0; border-radius:12px; border:none; font-family:inherit; }
+  input, select, button { font-size:16px; padding:11px 12px; margin:4px 0; border-radius:14px; border:none; font-family:inherit; }
   input, select { background:#fffdf6; color:#263238; }
-  button { background:linear-gradient(180deg,#43a047,#2e7d32); color:#fff; cursor:pointer; font-weight:700; box-shadow:0 3px 8px rgba(0,0,0,.28); }
-  button.sub { background:linear-gradient(180deg,#607d8b,#455a64); }
+  /* フェーズ22: 全体を「ほどよくPOP・ゲームらしく」へ。ボタンは明るい緑グラデ＋
+     角丸を大きくし、画面内のボタンには下側の厚み（押し込み感）を付ける。
+     レースHUD内のボタンは専用スタイルがあるため厚みは .panel 内などに限定する */
+  button { background:linear-gradient(180deg,#5cc465,#34a24b); color:#fff; cursor:pointer; font-weight:700; box-shadow:0 3px 8px rgba(0,0,0,.28); }
+  .panel button, #walletBar button, #settingsModal button { box-shadow:0 4px 0 rgba(0,0,0,.22),0 6px 14px rgba(0,0,0,.22); transition:transform .06s ease, box-shadow .06s ease; }
+  .panel button:active, #walletBar button:active, #settingsModal button:active { transform:translateY(2px); box-shadow:0 2px 0 rgba(0,0,0,.22),0 3px 8px rgba(0,0,0,.22); }
+  button.sub { background:linear-gradient(180deg,#7fa8c9,#5b84ad); }
   button:disabled { background:#666; opacity:.6; cursor:default; box-shadow:none; }
-  .card { background:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,.06)); border:1px solid rgba(255,255,255,.14); border-radius:16px; padding:16px; margin:12px 0; box-shadow:0 4px 14px rgba(0,0,0,.22); }
+  .card { background:linear-gradient(180deg,rgba(255,255,255,.15),rgba(255,255,255,.07)); border:1px solid rgba(255,255,255,.2); border-radius:18px; padding:16px; margin:12px 0; box-shadow:0 6px 18px rgba(0,0,0,.2); }
   /* iOS対策: ボタン・カード・HUDを押してもテキスト選択やコピー等のコールアウトを出さない */
   button, .horseCard, .chip, .distChips, .filterAxis, .filterVals, .bet-tabs, .stake-row,
   #walletBar, #raceWrap, #raceWrap *, #camBar, .home-btns2, .modeBtns {
@@ -26,30 +31,30 @@
   .code { font-size:28px; letter-spacing:4px; font-weight:bold; }
   /* 所持金バー（1人用版のホーム上部バーに相当） */
   #walletBar { position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:10px;
-    background:linear-gradient(180deg,rgba(24,48,20,.96),rgba(14,30,12,.94)); padding:10px 14px; border-bottom:2px solid rgba(255,213,79,.35); flex-wrap:wrap; backdrop-filter:blur(4px); }
+    background:linear-gradient(180deg,rgba(43,84,34,.97),rgba(27,56,20,.95)); padding:10px 14px; border-bottom:2px solid rgba(255,213,79,.45); flex-wrap:wrap; backdrop-filter:blur(4px); }
   #walletBar .bal { font-size:19px; font-weight:bold; color:#ffd54f; }
   #walletBar .spacer { flex:1; }
   #walletBar button { padding:6px 10px; font-size:14px; margin:0; }
   /* レース情報カード・距離選択 */
   .distChips { display:flex; gap:8px; flex-wrap:wrap; }
-  .distChips button { flex:1; min-width:96px; background:linear-gradient(180deg,#546e7a,#37474f); border-radius:14px; padding:12px 10px; }
-  .distChips button.sel { background:linear-gradient(180deg,#43a047,#2e7d32); outline:2px solid #ffd54f; }
+  .distChips button { flex:1; min-width:96px; background:linear-gradient(180deg,#5d7f95,#45677c); border-radius:16px; padding:12px 10px; }
+  .distChips button.sel { background:linear-gradient(180deg,#5cc465,#34a24b); outline:2px solid #ffd54f; }
   .distChips button small { display:block; font-size:11px; opacity:.85; }
-  .modeBtns button { width:100%; font-size:17.5px; padding:15px 14px; margin:7px 0; border-radius:14px; }
+  .modeBtns button { width:100%; font-size:17.5px; padding:15px 14px; margin:7px 0; border-radius:16px; }
   /* 馬選び（パドック風） */
-  #previewWrap { background:linear-gradient(#87b5d9 62%, #5d8a3c 62%); border-radius:10px; overflow:hidden; }
+  #previewWrap { background:linear-gradient(#87b5d9 62%, #5d8a3c 62%); border-radius:14px; overflow:hidden; }
   #previewCanvas { width:100%; height:220px; display:block; }
   .statRow { display:flex; align-items:center; gap:8px; margin:4px 0; font-size:13px; }
   .statRow .nm { width:76px; flex:none; }
   .statBar { flex:1; height:10px; background:#263238; border-radius:5px; overflow:hidden; }
   .statFill { height:100%; border-radius:5px; }
-  .chip { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; background:#546e7a; margin-right:4px; }
+  .chip { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; background:#5d7f95; margin-right:4px; }
   .chip.style { background:#6a1b9a; }
   .filterAxis, .filterVals { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
-  .filterAxis button, .filterVals button { padding:6px 10px; font-size:13px; background:#37474f; margin:0; }
-  .filterAxis button.sel, .filterVals button.sel { background:#2e7d32; outline:2px solid #ffd54f; }
+  .filterAxis button, .filterVals button { padding:6px 10px; font-size:13px; background:#47626f; margin:0; }
+  .filterAxis button.sel, .filterVals button.sel { background:#34a24b; outline:2px solid #ffd54f; }
   .horseGrid { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
-  .horseCard { position:relative; background:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,.05)); border:2px solid rgba(255,255,255,.16); border-radius:14px; padding:9px 10px 10px; cursor:pointer; font-size:13px; overflow:hidden; box-shadow:none; }
+  .horseCard { position:relative; background:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,.05)); border:2px solid rgba(255,255,255,.16); border-radius:16px; padding:9px 10px 10px; cursor:pointer; font-size:13px; overflow:hidden; box-shadow:none; }
   .horseCard.owned { border-left:6px solid #66bb6a; }
   .horseCard.sel { border-color:#ffd54f; background:rgba(255,213,79,.14); }
   .horseCard .hn { font-weight:bold; font-size:14px; }
@@ -58,14 +63,14 @@
   .horseCard.locked.sel { border:2px solid #ffd54f; }
   .horseCard.locked .hn { color:#b0bec5; }
   .horseCard.locked .dim { opacity:.5; filter:saturate(.35); }
-  .horseCard .ownBadge { display:inline-block; margin-top:5px; background:#2e7d32; color:#e8f5e9; font-size:11.5px; font-weight:900; border-radius:999px; padding:2px 9px; }
+  .horseCard .ownBadge { display:inline-block; margin-top:5px; background:#34a24b; color:#e8f5e9; font-size:11.5px; font-weight:900; border-radius:999px; padding:2px 9px; }
   .horseCard .priceBadge { display:inline-block; margin-top:5px; background:linear-gradient(180deg,#ffd54f,#ffb300); color:#4e342e; font-size:12.5px; font-weight:900; border-radius:999px; padding:3px 10px; box-shadow:0 2px 6px rgba(0,0,0,.35); }
   .lockTag { color:#ffd54f; font-size:12.5px; font-weight:700; }
   table { width:100%; border-collapse:collapse; }
   td, th { padding:6px; border-bottom:1px solid rgba(255,255,255,.15); text-align:left; }
   /* 設定モーダル */
   #settingsModal { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:50; display:flex; align-items:center; justify-content:center; }
-  #settingsModal .box { background:#1b2a1b; border-radius:14px; padding:20px; width:min(420px, 90vw); }
+  #settingsModal .box { background:#25472a; border-radius:18px; padding:20px; width:min(420px, 90vw); }
   #settingsModal label { display:block; margin:12px 0 4px; font-size:14px; }
   #settingsModal input[type=range] { width:100%; }
 
@@ -75,7 +80,7 @@
   #raceWrap canvas { display:block; }
   #raceWrap .hud { position:absolute; left:0; right:0; top:0; padding:8px 10px 0; pointer-events:none; z-index:5; }
   #raceWrap .hud-row { display:flex; gap:8px; align-items:stretch; justify-content:space-between; }
-  #raceWrap .plate { background:var(--panel); border:1px solid rgba(255,255,255,.18); border-radius:10px; padding:6px 10px; }
+  #raceWrap .plate { background:var(--panel); border:1px solid rgba(255,255,255,.18); border-radius:14px; padding:6px 10px; }
   #raceWrap #rankPlate { text-align:center; min-width:86px; }
   #raceWrap #rankNum { font-size:34px; font-weight:900; line-height:1; color:var(--accent); font-variant-numeric:tabular-nums; text-shadow:0 2px 0 rgba(0,0,0,.35); }
   #raceWrap #rankNum small { font-size:16px; color:#fff; }
@@ -84,8 +89,8 @@
   #raceWrap .meter-line { display:flex; align-items:center; gap:8px; font-size:12px; font-weight:700; }
   /* 汎用 .tag（ピル装飾）がメーター行にも効いて各行が太る移植バグを遮断し、1人用どおりプレーンなテキストラベルにする */
   #raceWrap .meter-line .tag { width:64px; text-align:right; text-shadow:0 1px 2px rgba(0,0,0,.6); flex:none; white-space:nowrap; background:none; border:none; border-radius:0; padding:0; color:#fff; }
-  #raceWrap .bar { flex:1; height:14px; background:rgba(0,0,0,.55); border:1px solid rgba(255,255,255,.35); border-radius:7px; overflow:hidden; }
-  #raceWrap .bar > i { display:block; height:100%; width:100%; border-radius:6px; transition:width .12s linear; }
+  #raceWrap .bar { flex:1; height:14px; background:rgba(0,0,0,.55); border:1px solid rgba(255,255,255,.35); border-radius:9px; overflow:hidden; }
+  #raceWrap .bar > i { display:block; height:100%; width:100%; border-radius:8px; transition:width .12s linear; }
   #raceWrap #stamFill { background:linear-gradient(90deg,#2fbf3f,#8be04e); }
   #raceWrap #progFill { background:linear-gradient(90deg,#ffb03a,#ff7a1a); width:0%; }
   #raceWrap #spdFill { background:linear-gradient(90deg,#39b6ff,#7ee0ff); width:0%; }
@@ -105,7 +110,7 @@
   /* 観戦時の長い馬名で順位プレートが広がりメーター列を圧迫しないよう幅を固定し、ラベルは省略表示にする */
   #raceWrap #rankPlate { max-width:120px; }
   #raceWrap #rankLabel { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  #raceWrap #distBig { margin-top:8px; background:rgba(8,14,22,.78); border:1px solid rgba(255,255,255,.30); border-radius:12px; padding:7px 14px 20px; text-align:center; }
+  #raceWrap #distBig { margin-top:8px; background:rgba(8,14,22,.78); border:1px solid rgba(255,255,255,.30); border-radius:16px; padding:7px 14px 20px; text-align:center; }
   #raceWrap .db-main { display:flex; align-items:baseline; justify-content:center; gap:8px; }
   #raceWrap .db-label { font-size:15px; font-weight:900; opacity:.85; }
   #raceWrap #distNum { font-size:44px; font-weight:900; line-height:1; font-variant-numeric:tabular-nums; color:#fff; }
@@ -117,11 +122,14 @@
   #raceWrap .dmk { position:absolute; top:-3px; width:2px; height:18px; background:#fff; }
   #raceWrap .dmk em { position:absolute; top:16px; left:50%; transform:translateX(-50%); font-style:normal; font-size:10px; font-weight:700; white-space:nowrap; color:#e8f2e8; text-shadow:0 1px 2px rgba(0,0,0,.7); }
   #raceWrap .dmk.fin em { transform:translateX(-92%); }
-  #raceWrap #raceBar { position:relative; height:10px; margin-top:8px; background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.25); border-radius:6px; }
+  #raceWrap #raceBar { position:relative; height:10px; margin-top:8px; background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.25); border-radius:8px; }
   #raceWrap #raceBar .dot { position:absolute; top:50%; width:11px; height:11px; border-radius:50%; transform:translate(-50%,-50%); border:2px solid #fff; }
   #raceWrap #raceBar .dot.me { width:15px; height:15px; border-color:var(--accent); z-index:2; }
   #raceWrap #raceBar .finish { position:absolute; right:2px; top:-4px; font-size:11px; }
-  #raceWrap #countdown { position:absolute; inset:0; z-index:8; display:none; align-items:center; justify-content:center; pointer-events:none; font-size:min(26vw,120px); font-weight:900; color:#fff; text-shadow:0 4px 0 rgba(0,0,0,.45),0 0 34px rgba(255,194,28,.8); }
+  #raceWrap #countdown { position:absolute; inset:0; z-index:8; display:flex; align-items:center; justify-content:center; pointer-events:none; font-size:min(34vw,170px); font-weight:900; color:#fff; text-shadow:0 6px 0 rgba(0,0,0,.4),0 0 44px rgba(255,194,28,.9); padding-top:12vh; box-sizing:border-box; }
+  #raceWrap #countdown .cd-num { display:inline-block; animation:cdPop .45s ease-out; }
+  #raceWrap #countdown .cd-go { color:var(--accent); font-size:min(27vw,132px); letter-spacing:.03em; }
+  @keyframes cdPop { 0% { transform:scale(1.7); opacity:0; } 40% { opacity:1; } 100% { transform:scale(1); opacity:1; } }
   #raceWrap #commentary { position:absolute; left:50%; transform:translateX(-50%); bottom:150px; z-index:5; max-width:92vw; background:rgba(10,16,26,.82); border:1px solid rgba(126,224,255,.45); color:#dff4ff; border-radius:999px; padding:5px 16px; font-size:13px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; display:none; }
   #raceWrap #commentary.on { display:block; }
   #raceWrap #goalFlash { position:absolute; left:50%; top:38%; transform:translate(-50%,-50%) scale(.82); z-index:9; text-align:center; pointer-events:none; opacity:0; transition:opacity .18s ease,transform .18s ease; text-shadow:0 4px 0 rgba(0,0,0,.45),0 0 44px rgba(255,194,28,.55); }
@@ -133,28 +141,31 @@
   #raceWrap .lookbtn.held { border-color:#7ee0ff; background:#14507e; }
   #raceWrap #controls { position:absolute; left:0; right:0; bottom:0; padding:8px 8px 10px; z-index:6; display:flex; gap:6px; justify-content:space-between; align-items:flex-end; }
   #raceWrap .pace-group { display:flex; gap:6px; flex:1; justify-content:center; }
-  #raceWrap .ctl { flex:1 1 58px; max-width:104px; min-height:60px; border-radius:14px; border:2px solid rgba(255,255,255,.35); background:var(--panel2); color:#fff; font-weight:900; font-size:14.5px; line-height:1.15; padding:6px 3px; margin:0; }
+  #raceWrap .ctl { flex:1 1 58px; max-width:104px; min-height:60px; border-radius:18px; border:2px solid rgba(255,255,255,.35); background:var(--panel2); color:#fff; font-weight:900; font-size:14.5px; line-height:1.15; padding:6px 3px; margin:0; }
   #raceWrap .ctl small { display:block; font-size:10px; font-weight:700; opacity:.85; margin-top:2px; }
   #raceWrap .ctl.active { border-color:var(--accent); background:#6b4d00; box-shadow:0 0 0 2px var(--accent) inset; color:#ffe9a8; }
   #raceWrap .ctl:active { transform:scale(.97); }
   #raceWrap .ctl:disabled { opacity:.55; }
   #raceWrap #btnWhip { background:#7c1d12; }
   #raceWrap #btnWhip.active { background:#6b4d00; }
-  #raceWrap .steer { flex:none; width:62px; height:74px; border-radius:14px; border:2px solid rgba(255,255,255,.4); background:rgba(20,50,80,.92); color:#fff; font-weight:900; font-size:24px; line-height:1.1; margin:0; }
+  #raceWrap .steer { flex:none; width:62px; height:74px; border-radius:18px; border:2px solid rgba(255,255,255,.4); background:rgba(20,50,80,.92); color:#fff; font-weight:900; font-size:24px; line-height:1.1; margin:0; }
   #raceWrap .steer small { display:block; font-size:10px; font-weight:700; }
   #raceWrap .steer.held { border-color:#7ee0ff; background:#14507e; box-shadow:0 0 0 2px #7ee0ff inset; }
     /* ===== 1人用移植: ゲート/観戦/賭け/記録まわりの追加UI ===== */
-    .race-card { margin-top:14px; background:#fff; border:2px solid #ead9a8; border-radius:16px; padding:14px 16px; text-align:left; }
+    .race-card { margin-top:14px; background:#fff; border:2px solid #ead9a8; border-radius:18px; padding:14px 16px; text-align:left; }
     .race-card .rc-name { font-size:17px; font-weight:900; color:#5b4305; }
     .race-card .rc-meta { margin-top:4px; font-size:12.5px; color:#7a6a45; font-weight:700; }
     .g1-badge { display:inline-block; background:linear-gradient(135deg,#b8860b,#ffd700); color:#fff; border-radius:6px; padding:1px 8px; font-size:12px; font-weight:900; margin-left:6px; vertical-align:2px; }
     .home-btns2 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:10px; }
     .home-btns2 button { padding:11px 4px; font-size:13.5px; }
     .relief-btn { width:100%; margin-top:10px; background:linear-gradient(135deg,#e2554f,#b3242e); color:#fff; }
-    #gateUI { position:absolute; left:50%; top:22%; transform:translateX(-50%); width:min(420px,88vw); background:rgba(10,18,28,.88); border:2px solid rgba(255,255,255,.25); border-radius:18px; padding:14px 16px; z-index:12; text-align:center; color:#fff; }
-    #gateUI .g-title { font-weight:900; font-size:15px; }
-    #gateTrack { position:relative; height:26px; margin:12px 0 6px; background:linear-gradient(90deg,#5b2020,#7a2b22 34%,#1e7d32 46%,#2ecc71 50%,#1e7d32 54%,#7a2b22 66%,#5b2020); border-radius:13px; overflow:hidden; }
-    #gateNeedle { position:absolute; top:-2px; width:4px; height:30px; background:#fff; border-radius:2px; box-shadow:0 0 8px #fff; left:0; }
+    #gateUI { position:absolute; left:50%; top:22%; transform:translateX(-50%); width:min(420px,88vw); background:rgba(13,22,40,.92); border:2px solid rgba(255,213,79,.6); border-radius:22px; padding:16px 18px; z-index:12; text-align:center; color:#fff; box-shadow:0 12px 32px rgba(0,0,0,.45); }
+    #gateUI .g-title { font-weight:900; font-size:16.5px; letter-spacing:.05em; }
+    /* フェーズ22: 配色を刷新（旧: 茶色＋緑で「キモい」との評価）。外側=コーラルレッド
+       （早すぎ/遅すぎ）、中間=オレンジ→スカイブルー、中央の完璧ゾーン=ゴールドにし、
+       ゲームらしいポップなグラデーションにした。ゾーン幅（中央46〜54%）は従来どおり */
+    #gateTrack { position:relative; height:26px; margin:12px 0 6px; background:linear-gradient(90deg,#e53935,#ff7043 26%,#ffb74d 40%,#4fc3f7 46.5%,#ffd54f 50%,#4fc3f7 53.5%,#ffb74d 60%,#ff7043 74%,#e53935); border-radius:13px; overflow:hidden; box-shadow:inset 0 2px 5px rgba(0,0,0,.35); }
+    #gateNeedle { position:absolute; top:-2px; width:4px; height:30px; background:#fff; border-radius:2px; box-shadow:0 0 10px #ffd54f,0 0 4px #fff; left:0; }
     #gateResult { min-height:22px; font-weight:900; font-size:15px; }
     #gateUI button { width:100%; margin-top:8px; padding:13px; font-size:16px; }
     .tag { display:inline-block; border-radius:999px; padding:3px 10px; font-size:11.5px; font-weight:800; background:rgba(20,32,44,.72); color:#e8f4ff; border:1px solid rgba(255,255,255,.28); }
@@ -346,7 +357,7 @@
     </div>
     <div id="raceBar"><span class="finish">🏁</span></div>
   </div>
-  <div id="countdown"></div>
+  <div id="countdown" class="hidden"></div>
   <div id="commentary"></div>
   <div id="camBar">
     <button data-cam="auto" class="on">📺 放送</button><button data-cam="leader">🏇 先頭集団</button><button data-cam="bet">🎫 買い目の馬</button><button data-cam="sky">🦅 上空</button><button data-cam="free">🎥 自由</button>
@@ -356,7 +367,7 @@
   <div id="foulBanner"></div>
   <div id="photoUI"><div class="photo-box">📸 写真判定中…<canvas id="photoCanvas" width="520" height="150"></canvas></div></div>
   <div id="gateUI" class="hidden">
-    <div class="g-title">⏱ ゲートのタイミング！針が真ん中（緑）で押して！</div>
+    <div class="g-title">⏱ ゲートのタイミング！針が真ん中（金色）で押して！</div>
     <div id="gateTrack"><div id="gateNeedle"></div></div>
     <div id="gateResult"></div>
     <button id="btnGate">ゲート開け！</button>
@@ -616,6 +627,23 @@ function tone(freq, delay, dur, type = 'sine', vol = 0.25) {
   o.connect(g); g.connect(masterGain);
   o.start(t0); o.stop(t0 + dur + 0.05);
 }
+function noiseHit(dur, type, freq, q, vol, delay = 0, swell = 0) {
+  // ノイズ系の音（蹄音・歓声）用ヘルパー。1人用 keiba-engine の gallopSound /
+  // crowdCheer と同じ合成方式（ノイズ→フィルタ→ゲイン包絡）
+  if (!audioCtx || sndMute) return;
+  const t0 = audioCtx.currentTime + delay;
+  const len = Math.max(1, Math.floor(audioCtx.sampleRate * dur));
+  const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (swell ? 1 : (1 - i / len));
+  const src = audioCtx.createBufferSource(); src.buffer = buf;
+  const f = audioCtx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+  const g = audioCtx.createGain();
+  if (swell) { g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + swell); g.gain.exponentialRampToValueAtTime(0.001, t0 + dur); }
+  else g.gain.value = vol;
+  src.connect(f); f.connect(g); g.connect(masterGain);
+  src.start(t0); src.stop(t0 + dur + 0.05);
+}
 function sfx(name) {
   if (sndMute) return;
   ensureAudio(); if (!audioCtx) return;
@@ -624,6 +652,11 @@ function sfx(name) {
   else if (name === 'foul') { tone(196, 0, 0.16, 'sawtooth', 0.2); tone(147, 0.1, 0.22, 'sawtooth', 0.2); }
   else if (name === 'fanfare') [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.11, 0.34, 'triangle', 0.25));
   else if (name === 'goal') [784, 988, 1175, 1568].forEach((f, i) => tone(f, i * 0.09, 0.3, 'triangle', 0.22));
+  // フェーズ22: 1人用から移植した合成音（蹄音・ゲート開扉・歓声・ムチ）
+  else if (name === 'gallop') noiseHit(0.09, 'lowpass', 500, 0.7, 0.5);
+  else if (name === 'clank') { tone(160, 0, 0.12, 'square', 0.2); tone(90, 0.02, 0.18, 'square', 0.17); tone(1250, 0.03, 0.06, 'square', 0.08); }
+  else if (name === 'cheer') noiseHit(1.4, 'bandpass', 900, 0.6, 0.4, 0, 0.25);
+  else if (name === 'whip') { tone(1200, 0, 0.06, 'sawtooth', 0.16); tone(900, 0.06, 0.06, 'sawtooth', 0.12); }
 }
 document.addEventListener('click', e => { if (e.target.closest('button')) sfx('click'); });
 function refreshSoundBtn() { $('btnSound').textContent = sndMute ? '🔇' : '🔊'; }
@@ -2061,15 +2094,15 @@ function initThree() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.04; // フェーズ15: 実機で「濃い・黒寄りで重い」との指示を受け、1人用の暗め調整(0.86)から晴天の競馬場の自然な明るさへ（上げすぎは白飛ばしになるため小幅に）
+  renderer.toneMappingExposure = 1.08; // フェーズ22: 「黒っぽく濃い・硬い」との再評価を受け、影側を持ち上げて柔らかくする方向で再調整（下記の光も連動。白飛びを避けるため小幅）
   $('raceWrap').appendChild(renderer.domElement);
   bindDragLook(renderer.domElement);
   // 空: グラデーションドーム（1人用のシェーダーを移植。雲なし）
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
     uniforms: {
-      top: { value: new THREE.Color(0x5480ab) }, mid: { value: new THREE.Color(0xb2c9db) },
-      hor: { value: new THREE.Color(0xedeade) }, low: { value: new THREE.Color(0xd6dcd2) },
+      top: { value: new THREE.Color(0x597ea3) }, mid: { value: new THREE.Color(0xa7bccf) },
+      hor: { value: new THREE.Color(0xe9e7da) }, low: { value: new THREE.Color(0xcfd6cf) },
     },
     vertexShader: 'varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
     fragmentShader: [
@@ -2087,8 +2120,8 @@ function initThree() {
   const sky = new THREE.Mesh(new THREE.SphereGeometry(1480, 32, 18), skyMat);
   sky.frustumCulled = false; scene.add(sky);
   // 光: 真上寄りの太陽（影つき）＋空の反射＋弱いフィル（1人用と同値）
-  scene.add(new THREE.HemisphereLight(0xcfe0ec, 0x55624a, 0.52)); // フェーズ15: 影側の黒つぶれを和らげるため 0.34→0.52
-  sunLight = new THREE.DirectionalLight(0xffe9c2, 2.45);
+  scene.add(new THREE.HemisphereLight(0xc4d6e2, 0x4c5540, 0.68)); // 色は1人用と同値。フェーズ22: 強さ 0.52→0.68 で影側（馬の腹・地面の影）を持ち上げ黒つぶれを減らす
+  sunLight = new THREE.DirectionalLight(0xffe9c2, 2.30); // フェーズ22: 2.45→2.30。直射を少し弱め、環境光との比を下げてコントラストの「硬さ」を和らげる
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.set(2048, 2048);
   sunLight.shadow.camera.left = -42; sunLight.shadow.camera.right = 42;
@@ -2096,7 +2129,7 @@ function initThree() {
   sunLight.shadow.camera.near = 20; sunLight.shadow.camera.far = 340;
   sunLight.shadow.bias = -0.0004; sunLight.shadow.normalBias = 0.03;
   scene.add(sunLight); scene.add(sunLight.target);
-  const fill = new THREE.DirectionalLight(0xdfeaf2, 0.18); fill.position.set(-90, 50, -70); scene.add(fill);
+  const fill = new THREE.DirectionalLight(0xdfeaf2, 0.26); fill.position.set(-90, 50, -70); scene.add(fill); // フェーズ22: 0.18→0.26（逆光側のフィルを強め影を柔らかく）
   // 地面: 外周の芝（1人用の刈り目ストライプ芝テクスチャ）
   const ground = new THREE.Mesh(new THREE.CircleGeometry(1460, 48), new THREE.MeshStandardMaterial({ map: grassTexture(90, 90), color: 0xc9ccc0, roughness: 1 }));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -0.03; ground.receiveShadow = true; scene.add(ground);
@@ -2142,6 +2175,7 @@ const DEBUG_ORBIT = new URLSearchParams(location.search).has('orbit'); // 検証
 let horseMeshes = new Map(); // nickname -> mesh
 let myDist = 0, myLat = 0, targetLat = 0, latVel = 0, mySpeed = 0, stamina = 100;
 let myPhase = 0; // 自馬の歩様位相（1人用 player.phase と同じく距離で進める。一人称の揺れと騎手の上下動の基準）
+let lastGallopCycle = 0; // 蹄音の発音管理（歩様の周期番号、フェーズ22）
 let paceKey = 'nari', whipsUsed = 0, whipUntil = 0, whipCdUntil = 0, paceHeat = 0;
 let myRank = 18, fieldSize = 18, myFinished = false, finishFlashAt = 0;
 let steerL = false, steerR = false;
@@ -2250,22 +2284,37 @@ function startCountdown(m) {
   racing = false;
   modelReady.then(() => setupField(m.field)); // 騎手GLB未読込のまま仮馬で組まない
   if (!watchMode) showGateUI();
+  /* カウントダウン（フェーズ22で根本修正）: 以前は #countdown の CSS が
+     display:none 固定で、JS の .hidden 付け外しが効かず数字が一切表示されて
+     いなかった（実測: textContent="3" でも computed display は none）。
+     .hidden クラスで表示を制御し、数字はサーバーの startAt に同期して切り替える
+     （受信時刻起点のローカルな1秒間隔だと、通信遅延ぶん発走とズレるため）。
+     全モード（ソロ/対戦/観戦）共通で同じ表示。数字の後は GO! を出して発走へ。 */
   const el = $('countdown');
   el.classList.remove('hidden');
-  let n = m.countdownSec || 3;
-  el.textContent = n;
-  const iv = setInterval(() => {
-    n--;
-    if (n <= 0) { clearInterval(iv); el.classList.add('hidden'); }
-    else { el.textContent = n; sfx('beep'); }
-  }, 1000);
+  sfx('fanfare');
+  const cdStartAt = m.startAt || (Date.now() + (m.countdownSec || 3) * 1000);
+  if (window.__cdTimer) clearInterval(window.__cdTimer);
+  let cdShown = null;
+  const cdTick = () => {
+    const remain = cdStartAt - Date.now();
+    if (remain <= -600) { clearInterval(window.__cdTimer); el.classList.add('hidden'); return; }
+    if (remain <= 0) {
+      if (cdShown !== 0) { cdShown = 0; el.innerHTML = '<span class="cd-num cd-go">GO!</span>'; tone(990, 0, 0.35, 'square', 0.16); }
+      return;
+    }
+    const n = Math.ceil(remain / 1000);
+    if (n !== cdShown) { cdShown = n; el.innerHTML = `<span class="cd-num">${n}</span>`; sfx('beep'); }
+  };
+  cdTick();
+  window.__cdTimer = setInterval(cdTick, 100);
 }
 function setupField(field) {
   initThree();
   horseMeshes.forEach(m => { scene.remove(m); if (m.userData.nameTag) { m.userData.nameTag.material.map.dispose(); m.userData.nameTag.material.dispose(); } });
   horseMeshes.clear(); runners.clear(); barDots.forEach(d => d.remove()); barDots.clear();
   fieldSize = field.length;
-  myDist = 0; myLat = 0; targetLat = 0; latVel = 0; mySpeed = 0; stamina = 100; myPhase = 0;
+  myDist = 0; myLat = 0; targetLat = 0; latVel = 0; mySpeed = 0; stamina = 100; myPhase = 0; lastGallopCycle = 0;
   paceKey = 'nari'; whipsUsed = 0; whipUntil = 0; whipCdUntil = 0; paceHeat = 0;
   myFinished = false; finishFlashAt = 0; myRank = fieldSize; raceClock = 0; sendAcc = 0;
   slipActive = false; lookYaw = 0; lookHeld = null; dragYaw = 0;
@@ -2328,6 +2377,7 @@ function beginRace(field, meta) {
   if (!watchMode && !gatePressed) pressGate(true); // カウントダウン中に押せなかったら自動判定
   if (gatePending) { myGateT = gatePending.gateT; if (gatePending.boost) mySpeed = 7.5 * SPEED_MULT; gatePending = null; }
   openGateDoors();
+  sfx('clank'); // フェーズ22: ゲート開扉の金属音（1人用 gateClank 相当）
   raceStartAt = performance.now();
   racing = true;
   lastFrame = performance.now();
@@ -2735,6 +2785,7 @@ function showGoalFlash(place, label) {
   $('goalFlashMain').textContent = place + '着！';
   $('goalFlashSub').textContent = (label ? label + ' ／ ' : '') + fieldSize + '頭中';
   f.classList.add('show');
+  sfx('cheer'); // フェーズ22: ゴールの歓声（1人用 crowdCheer 相当。flashDone 経由で1レース1回だけ呼ばれる）
   setTimeout(() => f.classList.remove('show'), 2600);
 }
 
@@ -3025,6 +3076,10 @@ function raceLoop(now) {
       // 時計駆動（0.12+sf×1.05）にする（フェーズ19）
       if (mySpeed > 0.3) myPhase += Math.max(0, myDist - prevMyDist) / strideLenOf(mySpeed) * Math.PI * 2;
       else myPhase += sdt * 0.7;
+      // 蹄音（フェーズ22）: 歩様が1周期進むごとに1回、自馬の脚運びと同期させる
+      // （1人用は約7.5mごとに gallopSound。ここでは位相周期＝1完歩ごとに鳴らす）
+      const gcyc = Math.floor(myPhase / (Math.PI * 2));
+      if (gcyc !== lastGallopCycle) { lastGallopCycle = gcyc; if (racing && !watchMode && mySpeed > 6) sfx('gallop'); }
       checkInterference(sdt);
     }
     // サーバーへ位置送信（実時間で約20Hz。速度上限チェックに引っかからない通常送信間隔）
@@ -3563,7 +3618,7 @@ function tryWhip() {
   whipCdUntil = now + 2600; // 1人用: クールダウン2.6秒
   stamina = Math.max(0, stamina - 5); // 1人用: コスト5（回数はマルチ版仕様の3回まで）
   updateWhipLabel();
-  sfx('beep');
+  sfx('whip'); // フェーズ22: ムチ音（1人用の2段ビープ相当）
 }
 /* ---------- 入力（1人用と同じ押下ホールド式） ---------- */
 document.querySelectorAll('#controls .ctl[data-pace]').forEach(b => b.addEventListener('click', () => setPace(b.dataset.pace)));
