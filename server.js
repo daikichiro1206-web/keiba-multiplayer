@@ -32,6 +32,7 @@ function validDistance(v) {
 
 const PORT = process.env.PORT || 3000;
 const TRACK_LEN = 2000;          // 物理コース1周（ゴール固定。レース距離はこれ以下で、スタートが前にずれる）
+const FINISH_S = 525;            // 決勝線の物理位置（フェーズ33: 最終コーナー出口= s 0 からホームストレートを 525m 進んだ点。クライアントと同値）
 const FIELD_SIZE = CAT.FIELD_SIZE; // 18頭立て（名簿50頭から抽選）
 const MAX_HUMANS = 8;            // 1部屋の最大人数（残りはNPC）
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data'); // 保存先は環境変数で変更可（デプロイ先の永続ディスク向け）
@@ -505,9 +506,12 @@ const npcAptMul = (apt, len) => 1 + ((((apt || [1, 1, 1])[distCatIdxOf(len)]) ??
 function npcCornerFactor(room, dist, lat) {
   return npcIsCorner(room, dist) ? 110 / (110 + lat) : 1;
 }
-/* コーナー判定（1人用 isCorner と同じ物理座標の区間: 直線≈654.5m / 弧≈345.6m） */
+/* コーナー判定（1人用 isCorner と同じ物理座標の区間: 直線≈654.5m / 弧≈345.6m）
+   フェーズ33: 決勝線をホームストレート始点（s=0）から 525m 先へ移したため、
+   レース座標→物理座標のオフセットに FINISH_S を加える（区間境界は s 空間で不変。
+   クライアント physOff / isCornerAt と同一式） */
 function npcIsCorner(room, dist) {
-  const s = ((dist + (TRACK_LEN - (room.raceDist || 2000))) % TRACK_LEN + TRACK_LEN) % TRACK_LEN;
+  const s = ((dist + (TRACK_LEN - (room.raceDist || 2000) + FINISH_S)) % TRACK_LEN + TRACK_LEN) % TRACK_LEN;
   return (s >= 654.5 && s < 1000.1) || s >= 1654.6;
 }
 function npcPhaseIdx(room, dist) { const L = room.raceDist || 2000; return dist < L * 0.3 ? 0 : dist < L * 0.6 ? 1 : dist < L * 0.8 ? 2 : 3; }
