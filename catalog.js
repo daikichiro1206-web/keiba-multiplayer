@@ -16,6 +16,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 94,
@@ -40,6 +41,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 93,
@@ -64,6 +66,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 91,
@@ -88,7 +91,8 @@ const HORSES = [
   "apt": [
    1,
    2,
-   2
+   2,
+   1
   ],
   "rating": 95,
   "base": 16.95,
@@ -112,6 +116,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 96,
@@ -136,6 +141,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 93,
@@ -160,6 +166,7 @@ const HORSES = [
   "apt": [
    1,
    2,
+   1,
    1
   ],
   "rating": 90,
@@ -184,6 +191,7 @@ const HORSES = [
   "apt": [
    1,
    2,
+   0,
    0
   ],
   "rating": 87,
@@ -208,7 +216,8 @@ const HORSES = [
   "apt": [
    1,
    2,
-   2
+   2,
+   1
   ],
   "rating": 91,
   "base": 16.97,
@@ -232,6 +241,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 90,
@@ -256,6 +266,7 @@ const HORSES = [
   "apt": [
    0,
    0,
+   2,
    2
   ],
   "rating": 88,
@@ -280,6 +291,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 90,
@@ -304,7 +316,8 @@ const HORSES = [
   "apt": [
    1,
    2,
-   2
+   2,
+   1
   ],
   "rating": 89,
   "base": 16.9,
@@ -328,6 +341,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 91,
@@ -352,7 +366,8 @@ const HORSES = [
   "apt": [
    1,
    2,
-   2
+   2,
+   1
   ],
   "rating": 90,
   "base": 16.93,
@@ -376,6 +391,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 92,
@@ -400,6 +416,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 89,
@@ -424,6 +441,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 89,
@@ -448,7 +466,8 @@ const HORSES = [
   "apt": [
    1,
    2,
-   2
+   2,
+   1
   ],
   "rating": 92,
   "base": 16.9,
@@ -472,6 +491,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 90,
@@ -496,6 +516,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 89,
@@ -520,6 +541,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 93,
@@ -544,6 +566,7 @@ const HORSES = [
   "apt": [
    0,
    0,
+   2,
    2
   ],
   "rating": 90,
@@ -568,7 +591,8 @@ const HORSES = [
   "apt": [
    1,
    2,
-   2
+   2,
+   1
   ],
   "rating": 89,
   "base": 16.9,
@@ -592,6 +616,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 89,
@@ -616,6 +641,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 92,
@@ -640,6 +666,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 88,
@@ -664,6 +691,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 88,
@@ -688,6 +716,7 @@ const HORSES = [
   "apt": [
    1,
    2,
+   1,
    1
   ],
   "rating": 88,
@@ -712,7 +741,8 @@ const HORSES = [
   "apt": [
    1,
    2,
-   2
+   2,
+   1
   ],
   "rating": 90,
   "base": 16.9,
@@ -736,6 +766,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 93,
@@ -760,6 +791,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 92,
@@ -784,6 +816,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 91,
@@ -808,6 +841,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 90,
@@ -832,7 +866,8 @@ const HORSES = [
   "apt": [
    1,
    2,
-   2
+   2,
+   1
   ],
   "rating": 89,
   "base": 16.88,
@@ -856,6 +891,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 89,
@@ -880,6 +916,7 @@ const HORSES = [
   "apt": [
    0,
    0,
+   2,
    2
   ],
   "rating": 89,
@@ -904,7 +941,8 @@ const HORSES = [
   "apt": [
    2,
    2,
-   1
+   1,
+   0
   ],
   "rating": 90,
   "base": 16.93,
@@ -928,6 +966,7 @@ const HORSES = [
   "apt": [
    1,
    2,
+   1,
    1
   ],
   "rating": 87,
@@ -952,7 +991,8 @@ const HORSES = [
   "apt": [
    1,
    2,
-   2
+   2,
+   1
   ],
   "rating": 88,
   "base": 16.85,
@@ -976,7 +1016,8 @@ const HORSES = [
   "apt": [
    2,
    2,
-   1
+   1,
+   0
   ],
   "rating": 90,
   "base": 16.9,
@@ -1000,6 +1041,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 90,
@@ -1024,7 +1066,8 @@ const HORSES = [
   "apt": [
    1,
    2,
-   2
+   2,
+   1
   ],
   "rating": 91,
   "base": 16.91,
@@ -1048,6 +1091,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 90,
@@ -1072,6 +1116,7 @@ const HORSES = [
   "apt": [
    2,
    1,
+   0,
    0
   ],
   "rating": 91,
@@ -1096,7 +1141,8 @@ const HORSES = [
   "apt": [
    1,
    2,
-   2
+   2,
+   1
   ],
   "rating": 92,
   "base": 16.92,
@@ -1119,6 +1165,7 @@ const HORSES = [
   "styleKey": "sashi",
   "apt": [
    0,
+   2,
    2,
    2
   ],
@@ -1144,6 +1191,7 @@ const HORSES = [
   "apt": [
    0,
    2,
+   2,
    2
   ],
   "rating": 90,
@@ -1168,6 +1216,7 @@ const HORSES = [
   "apt": [
    0,
    1,
+   2,
    2
   ],
   "rating": 92,
@@ -1192,7 +1241,8 @@ const HORSES = [
   "apt": [
    1,
    2,
-   2
+   2,
+   1
   ],
   "rating": 93,
   "base": 16.93,
@@ -1224,18 +1274,19 @@ const INITIAL_BALANCE = 10000;
 
 /* レース名・グレード（1人用 horses.ts RACE_INFO / rollGrade と同一） */
 const RACE_INFO = {
-  1000: { name: '疾風スプリント', category: '短距離' },
-  1500: { name: 'マイルグランプリ', category: 'マイル' },
+  1200: { name: '疾風スプリント', category: '短距離' },
+  1600: { name: 'マイルグランプリ', category: 'マイル' },
   2000: { name: '中距離チャンピオンシップ', category: '中距離' },
+  2400: { name: '長距離ステイヤーズ', category: '長距離' },
 };
-const DISTANCES = [1000, 1500, 2000];
+const DISTANCES = [1200, 1600, 2000, 2400];
 const G1_PRIZE_MULT = 2;
 const G1_PAYOUT_MULT = 1.5;
 function rollGrade() { return Math.random() < 0.25 ? 'g1' : 'normal'; }
 
-/* 騎手賞金: 1500m基準 [1000,500,300,200,100]、距離倍率、G1は2倍（1人用と同一） */
-const DIST_PRIZE_MULT = { 1000: 0.7, 1500: 1, 2000: 1.5 };
-function prizeForRank(rank, grade = 'normal', distance = 1500) {
+/* 騎手賞金: 1600m基準 [1000,500,300,200,100]、距離倍率（長いほど多い）、G1は2倍（1人用と同一） */
+const DIST_PRIZE_MULT = { 1200: 0.8, 1600: 1.1, 2000: 1.5, 2400: 2.0 };
+function prizeForRank(rank, grade = 'normal', distance = 1600) {
   const base = [1000, 500, 300, 200, 100][rank - 1] || 0;
   const distMult = DIST_PRIZE_MULT[distance] != null ? DIST_PRIZE_MULT[distance] : 1;
   return Math.round(base * distMult * (grade === 'g1' ? G1_PRIZE_MULT : 1));
