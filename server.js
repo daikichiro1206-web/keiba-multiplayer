@@ -72,6 +72,14 @@ function publicProfile(nickname) {
 /* プレイヤー記録の拡張フィールド（ミッション進捗カウンタ・受取済み・賭け履歴・
    騎手ランキングのシーズン状態・次のレースのグレード・観戦セッション）。
    旧データにも欠けていれば既定値を補う（1人用 actions.ts の各テーブル相当）。 */
+/* 初期解放の世代管理（フェーズ22）: 初期解放は「最低限の保証」として扱い、
+   プレイヤーの解放済みリストとは常に合算（ユニオン）する。スターター構成が
+   変わっても、既に解放した馬が巻き戻ることは絶対にない。
+   LEGACY_STARTER_IDS はフェーズ21までの初期解放4頭。購入で解放した馬の記録
+   （paidIds）が無い旧データでは、「旧スターター以外の解放済み＝購入分」と
+   みなして復元する（スターター化した馬を過去に買っていた人のミッション
+   進捗「新しい馬を3頭解放」が減らないようにするため）。 */
+const LEGACY_STARTER_IDS = ['sodashi', 'mcqueen', 'vodka', 'duramente'];
 function normalizePlayer(p) {
   if (!p.counters) p.counters = {};                       // counter:<key> 相当
   if (!p.claimedMissions) p.claimedMissions = {};          // mission:<id> の claimed 相当
@@ -80,11 +88,21 @@ function normalizePlayer(p) {
   if (!p.season) p.season = { n: 1, races: 0, wins: {}, prevWins: null, prevSeason: 0 };
   if (p.pendingGrade === undefined) p.pendingGrade = null;
   if (p.watchSession === undefined) p.watchSession = null;
+  if (!Array.isArray(p.unlocked)) p.unlocked = [];
+  if (!Array.isArray(p.paidIds)) {
+    // 旧データの移行: 旧スターター以外の解放済みは購入で解放したものとして記録
+    p.paidIds = p.unlocked.filter(id => !LEGACY_STARTER_IDS.includes(id));
+  }
+  // 初期解放の保証マージ: 現在のスターターを合算するだけ（削除は一切しない）
+  for (const id of CAT.STARTER_IDS) if (!p.unlocked.includes(id)) p.unlocked.push(id);
   return p;
 }
 function bumpCounter(p, key, by = 1) { p.counters[key] = (p.counters[key] || 0) + by; }
 function counterValue(p, key) { return p.counters[key] || 0; }
 function paidUnlockCount(p) {
+  // 購入で解放した頭数（フェーズ22: paidIds で数える。スターター構成の変更で
+  // 過去の購入分が「初期解放」に化けて進捗が減るのを防ぐ）
+  if (Array.isArray(p.paidIds)) return p.paidIds.length;
   return Math.max(0, p.unlocked.filter(id => !CAT.STARTER_IDS.includes(id)).length);
 }
 function missionProgress(p, def) {
@@ -135,7 +153,7 @@ function authPlayer(nickname, password) {
     const salt = crypto.randomBytes(8).toString('hex');
     p = players[nickname] = normalizePlayer({
       salt, passHash: hashPassword(password, salt),
-      balance: CAT.INITIAL_BALANCE, unlocked: [...DEFAULT_UNLOCKED], wins: 0, races: 0,
+      balance: CAT.INITIAL_BALANCE, unlocked: [...DEFAULT_UNLOCKED], paidIds: [], wins: 0, races: 0,
     });
     persistPlayer(nickname);
   } else if (p.passHash !== hashPassword(password, p.salt)) {
@@ -169,6 +187,8 @@ const server = http.createServer((req, res) => {
         if (p.balance < h.price) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: '所持金が足りません' })); return; }
         p.balance -= h.price;
         p.unlocked.push(h.id);
+        if (!Array.isArray(p.paidIds)) p.paidIds = [];
+        p.paidIds.push(h.id); // 購入分の記録（ミッション進捗の算定用、フェーズ22）
         persistPlayer(nickname);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ profile: publicProfile(nickname) }));
@@ -402,7 +422,7 @@ function maybeStartCountdown(room) {
   buildField(room);
   const startAt = Date.now() + 3000;
   room.raceStartAt = startAt;
-  broadcast(room, { type: 'countdown', startAt, field: fieldList(room), meta: raceMeta(room) });
+  broadcast(room, { type: 'countdown', startAt, countdownSec: 3, field: fieldList(room), meta: raceMeta(room) });
   setTimeout(() => startRace(room), 3000);
 }
 /* =====================================================================
@@ -1234,7 +1254,13 @@ if (require.main === module) (async () => {
     store = createStore(process.env, { dataFile: DATA_FILE });
     const loaded = await store.init();   // PostgreSQL時はテーブル自動作成＋全件読み込み
     Object.assign(players, loaded);
-    for (const k of Object.keys(players)) normalizePlayer(players[k]); // 旧データに拡張フィールドを補う
+    let merged = 0;
+    for (const k of Object.keys(players)) {
+      const before = (players[k].unlocked || []).length;
+      normalizePlayer(players[k]); // 旧データに拡張フィールドを補い、初期解放の保証マージを適用
+      if ((players[k].unlocked || []).length !== before) merged++;
+    }
+    if (merged > 0) { persistAll(); console.log(`[store] 初期解放の保証マージを ${merged} 件に適用し保存しました`); }
     console.log(`[store] 保存先: ${store.describe()}（プレイヤー ${Object.keys(players).length} 件を読み込み）`);
   } catch (e) {
     // DATABASE_URL の設定ミス等で保存先が使えない場合は、データを守るため起動を止めて気づけるようにする
