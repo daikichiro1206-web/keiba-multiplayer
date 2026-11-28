@@ -132,6 +132,10 @@
   @keyframes cdPop { 0% { transform:scale(1.7); opacity:0; } 40% { opacity:1; } 100% { transform:scale(1); opacity:1; } }
   #raceWrap #commentary { position:absolute; left:50%; transform:translateX(-50%); bottom:150px; z-index:5; max-width:92vw; background:rgba(10,16,26,.82); border:1px solid rgba(126,224,255,.45); color:#dff4ff; border-radius:999px; padding:5px 16px; font-size:13px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; display:none; }
   #raceWrap #commentary.on { display:block; }
+  /* フェーズ28: 僅差リプレイのフリーズ瞬間は実況バナーを大きくして見せる */
+  #raceWrap #commentary.big { bottom:44%; font-size:clamp(19px,5.4vw,32px); padding:10px 26px; border-color:var(--accent); color:#ffe9a8; background:rgba(24,10,4,.88); white-space:normal; text-align:center; line-height:1.35; }
+  #btnCloseReplay { background:linear-gradient(135deg,#ff7043,#c62828); color:#fff; font-weight:900; animation:closePulse 1.25s ease-in-out infinite; }
+  @keyframes closePulse { 0%,100% { box-shadow:0 0 0 0 rgba(255,112,67,.55); } 50% { box-shadow:0 0 0 10px rgba(255,112,67,0); } }
   /* ガイド（フェーズ23）: 実況ピルの上に重ならないよう少し上へ。絶対配置なので
      出し入れでレイアウトは動かない（フェーズ21のガクガク対策と同方針） */
   #raceWrap #guide { position:absolute; left:50%; transform:translateX(-50%); bottom:192px; z-index:5; max-width:92vw; background:rgba(26,34,10,.87); border:1px solid rgba(190,242,100,.6); color:#eef7d8; border-radius:999px; padding:5px 16px; font-size:13px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; display:none; }
@@ -372,7 +376,7 @@
   <button id="skipBtn">⏩ 残り1000mまでスキップ</button>
   <button id="watchExit">🏠 ホームへ（賭け金は返金）</button>
   <div id="foulBanner"></div>
-  <div id="photoUI"><div class="photo-box">📸 写真判定中…<canvas id="photoCanvas" width="520" height="150"></canvas></div></div>
+  <div id="photoUI"><div class="photo-box"><span id="photoTitle">📸 写真判定中…</span><canvas id="photoCanvas" width="520" height="150"></canvas></div></div>
   <div id="gateUI" class="hidden">
     <div class="g-title">⏱ ゲートのタイミング！針が真ん中（金色）で押して！</div>
     <div id="gateTrack"><div id="gateNeedle"></div></div>
@@ -412,6 +416,7 @@
     <table id="resultTable"></table>
     <div id="finalTime" style="font-size:13px;margin-top:6px"></div>
   </div>
+  <button id="btnCloseReplay" class="hidden" style="width:100%;margin-bottom:8px">🔥 僅差リプレイ</button>
   <button id="btnReplay" class="hidden" style="width:100%;margin-bottom:8px">🎬 リプレイを見る</button>
   <button id="btnAgain" style="width:100%">ロビーに戻る</button>
 </div>
@@ -1766,12 +1771,18 @@ function makeGrassCanvas(stripeA, stripeB, patchCols, blades) {
   g.fillStyle = 'rgba(220,238,190,0.10)'; g.fillRect(257, 0, 5, 512); g.fillRect(0, 0, 5, 512);
   for (let pi = 0; pi < 340; pi++) {
     g.fillStyle = patchCols[(Math.random() * patchCols.length) | 0];
-    g.globalAlpha = 0.05 + Math.random() * 0.10;
+    g.globalAlpha = 0.07 + Math.random() * 0.13; // フェーズ28: 斑を強め平坦さを消す
     g.beginPath(); g.ellipse(Math.random() * 512, Math.random() * 512, 16 + Math.random() * 70, 10 + Math.random() * 44, Math.random() * 3, 0, 7); g.fill();
   }
-  for (let wi = 0; wi < 130; wi++) {
+  // 大きな色のうねり（フェーズ28: 遠景でものっぺりしないよう低周波の濃淡）
+  for (let pi = 0; pi < 26; pi++) {
+    g.fillStyle = patchCols[(Math.random() * patchCols.length) | 0];
+    g.globalAlpha = 0.05 + Math.random() * 0.07;
+    g.beginPath(); g.ellipse(Math.random() * 512, Math.random() * 512, 60 + Math.random() * 150, 40 + Math.random() * 100, Math.random() * 3, 0, 7); g.fill();
+  }
+  for (let wi = 0; wi < 170; wi++) {
     g.fillStyle = Math.random() < 0.5 ? '#93a05c' : '#a8a468';
-    g.globalAlpha = 0.05 + Math.random() * 0.08;
+    g.globalAlpha = 0.06 + Math.random() * 0.11; // フェーズ28: 日焼け斑も少し強く
     g.beginPath(); g.ellipse(Math.random() * 512, Math.random() * 512, 5 + Math.random() * 20, 3 + Math.random() * 12, Math.random() * 3, 0, 7); g.fill();
   }
   g.globalAlpha = 1;
@@ -1790,13 +1801,14 @@ function grassTexture(rx, ry, infield = false) {
   let cv;
   if (infield) {
     if (!infieldCanvasCache) {
-      infieldCanvasCache = makeGrassCanvas('#5c8a41', '#477233',
+      // フェーズ28: ストライプ2色の明度差を広げ、刈り目が遠景でも読めるようにした
+      infieldCanvasCache = makeGrassCanvas('#619146', '#3f6d2c',
         ['#649250', '#426e2f', '#759a52', '#557f3c', '#7f9a55', '#4a7534'], 42000);
     }
     cv = infieldCanvasCache;
   } else {
     if (!grassCanvasCache) {
-      grassCanvasCache = makeGrassCanvas('#639349', '#4c7a35',
+      grassCanvasCache = makeGrassCanvas('#679a4c', '#447632',
         ['#6d9a52', '#4c7834', '#7a9a4e', '#5d8547', '#8a9a58', '#527a38'], 30000);
     }
     cv = grassCanvasCache;
@@ -1810,26 +1822,52 @@ function grassTexture(rx, ry, infield = false) {
 // 斑・内側の踏み荒らされた帯・ハロー目・轍・蹄跡・土塊を重ねる。
 // キャンバス x=進行方向（リボンの u）、y=横方向。UV v=0 が内側なので、
 // 踏み荒らし帯と蹄跡の密集はキャンバス下端（y=512側）に寄せる。
+// フェーズ28: タイルを 1024×512・14m に拡大（繰り返し感の低減）、
+// 大スケールの色むら・ハロー溝のコントラスト・縁の砂飛散を追加し、
+// 遠景でも「一様な茶色の帯」に潰れないようにした。
 function makeDirtCanvas() {
-  const c = document.createElement('canvas'); c.width = c.height = 512;
-  const g = c.getContext('2d'); g.fillStyle = '#ece5d8'; g.fillRect(0, 0, 512, 512);
+  const W = 1024, H = 512;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'); g.fillStyle = '#ece5d8'; g.fillRect(0, 0, W, H);
+  // 大スケールの色むら（遠くから見たときの単調さを消す。タイル内でも場所ごとに違う顔になる）
+  for (let pi = 0; pi < 26; pi++) {
+    const dark = Math.random() < 0.55;
+    g.fillStyle = dark ? 'rgba(110,84,54,' + (0.05 + Math.random() * 0.06) + ')' : 'rgba(255,250,238,' + (0.04 + Math.random() * 0.05) + ')';
+    g.beginPath(); g.ellipse(Math.random() * W, Math.random() * H, 120 + Math.random() * 300, 40 + Math.random() * 110, 0, 0, 7); g.fill();
+  }
+  // 湿った部分の色むら（少し暗く沈む大きな斑）
+  for (let pi = 0; pi < 7; pi++) {
+    g.fillStyle = 'rgba(88,66,44,' + (0.05 + Math.random() * 0.06) + ')';
+    g.beginPath(); g.ellipse(Math.random() * W, Math.random() * H, 90 + Math.random() * 190, 30 + Math.random() * 80, 0, 0, 7); g.fill();
+  }
   for (let pi = 0; pi < 130; pi++) {
     const dark = Math.random() < 0.55;
     g.fillStyle = dark ? 'rgba(122,96,64,' + (0.04 + Math.random() * 0.07) + ')' : 'rgba(255,250,238,' + (0.04 + Math.random() * 0.06) + ')';
-    g.beginPath(); g.ellipse(Math.random() * 512, Math.random() * 512, 26 + Math.random() * 90, 16 + Math.random() * 54, Math.random() * 0.6 - 0.3, 0, 7); g.fill();
+    g.beginPath(); g.ellipse(Math.random() * W, Math.random() * H, 26 + Math.random() * 90, 16 + Math.random() * 54, Math.random() * 0.6 - 0.3, 0, 7); g.fill();
   }
-  const band = g.createLinearGradient(0, 0, 0, 512);
+  // 内側の踏み荒らし帯（フェーズ28: 最大濃度 0.20→0.30 に強化）
+  const band = g.createLinearGradient(0, 0, 0, H);
   band.addColorStop(0, 'rgba(255,248,232,0.05)'); band.addColorStop(0.38, 'rgba(104,80,52,0.04)');
-  band.addColorStop(0.62, 'rgba(104,80,52,0.15)'); band.addColorStop(1, 'rgba(104,80,52,0.20)');
-  g.fillStyle = band; g.fillRect(0, 0, 512, 512);
-  for (let hy = 2; hy < 512; hy += 5) {
-    g.fillStyle = 'rgba(110,86,56,' + (0.05 + Math.random() * 0.05) + ')'; g.fillRect(0, hy, 512, 1.1);
-    g.fillStyle = 'rgba(255,250,240,' + (0.04 + Math.random() * 0.04) + ')'; g.fillRect(0, hy + 2.4, 512, 1);
+  band.addColorStop(0.62, 'rgba(104,80,52,0.20)'); band.addColorStop(1, 'rgba(104,80,52,0.30)');
+  g.fillStyle = band; g.fillRect(0, 0, W, H);
+  // 多くの馬が通るライン（内から約1/3）の帯も少し暗くする
+  const laneBand = g.createLinearGradient(0, H * 0.55, 0, H * 0.92);
+  laneBand.addColorStop(0, 'rgba(96,72,46,0)'); laneBand.addColorStop(0.5, 'rgba(96,72,46,0.13)'); laneBand.addColorStop(1, 'rgba(96,72,46,0)');
+  g.fillStyle = laneBand; g.fillRect(0, H * 0.55, W, H * 0.37);
+  // ハロー掛けの溝（進行方向の縦溝。フェーズ28: 間隔に揺らぎ＋濃淡を強化）
+  for (let hy = 2; hy < H; hy += 3.6 + Math.random() * 1.8) {
+    g.fillStyle = 'rgba(110,86,56,' + (0.09 + Math.random() * 0.08) + ')'; g.fillRect(0, hy, W, 1.2);
+    g.fillStyle = 'rgba(255,250,240,' + (0.06 + Math.random() * 0.06) + ')'; g.fillRect(0, hy + 1.9, W, 1);
   }
-  for (let si = 0; si < 300; si++) { g.fillStyle = 'rgba(92,68,42,' + (0.05 + Math.random() * 0.11) + ')';
-    g.fillRect(Math.random() * 430, Math.random() * 512, 30 + Math.random() * 82, 1 + Math.random() * 2.6); }
-  for (let sj = 0; sj < 130; sj++) { g.fillStyle = 'rgba(255,246,228,' + (0.05 + Math.random() * 0.08) + ')';
-    g.fillRect(Math.random() * 430, Math.random() * 512, 22 + Math.random() * 60, 1 + Math.random() * 2); }
+  // 轍（よく通るラインに沿った深めの2本線）
+  for (const ry of [H * 0.70, H * 0.78]) {
+    g.fillStyle = 'rgba(92,68,42,0.16)'; g.fillRect(0, ry, W, 2.6);
+    g.fillStyle = 'rgba(255,248,234,0.10)'; g.fillRect(0, ry + 3.4, W, 1.4);
+  }
+  for (let si = 0; si < 420; si++) { g.fillStyle = 'rgba(92,68,42,' + (0.05 + Math.random() * 0.11) + ')';
+    g.fillRect(Math.random() * (W - 90), Math.random() * H, 30 + Math.random() * 82, 1 + Math.random() * 2.6); }
+  for (let sj = 0; sj < 180; sj++) { g.fillStyle = 'rgba(255,246,228,' + (0.05 + Math.random() * 0.08) + ')';
+    g.fillRect(Math.random() * (W - 90), Math.random() * H, 22 + Math.random() * 60, 1 + Math.random() * 2); }
   function hoof(x, y, s, a) {
     g.save(); g.translate(x, y); g.rotate(a); g.scale(s, s);
     g.strokeStyle = 'rgba(84,62,38,0.5)'; g.lineWidth = 2.1;
@@ -1840,29 +1878,37 @@ function makeDirtCanvas() {
     g.beginPath(); g.ellipse(0, -1.4, 2.4, 1.8, 0, 0, 7); g.fill();
     g.restore();
   }
-  for (let hi = 0; hi < 620; hi++) {
+  for (let hi = 0; hi < 1150; hi++) {
     const onLine = Math.random() < 0.62;
-    const hx = Math.random() * 512, hy2 = onLine ? 512 - Math.pow(Math.random(), 1.5) * 300 : Math.random() * 512;
+    const hx = Math.random() * W, hy2 = onLine ? H - Math.pow(Math.random(), 1.5) * 300 : Math.random() * H;
     hoof(hx, hy2, 0.75 + Math.random() * 0.6, (Math.random() - 0.5) * 0.5);
   }
-  for (let j = 0; j < 26000; j++) { const d = Math.random();
+  // コース脇の砂の飛散（両端に明るい砂粒。内側ほど多い）
+  for (let ei = 0; ei < 2400; ei++) {
+    const inner = Math.random() < 0.68;
+    const ey = inner ? H - Math.pow(Math.random(), 2.2) * 46 : Math.pow(Math.random(), 2.2) * 40;
+    g.fillStyle = 'rgba(255,246,226,' + (0.10 + Math.random() * 0.22) + ')';
+    g.fillRect(Math.random() * W, ey, 1.4 + Math.random() * 2.2, 1.2 + Math.random() * 1.6);
+  }
+  for (let j = 0; j < 48000; j++) { const d = Math.random();
     g.fillStyle = d < 0.52 ? 'rgba(102,78,52,' + (0.10 + Math.random() * 0.26) + ')' : 'rgba(255,250,240,' + (0.09 + Math.random() * 0.22) + ')';
-    g.fillRect(Math.random() * 512, Math.random() * 512, 1.7, 1.7); }
-  for (let cj = 0; cj < 900; cj++) { const cv = 96 + ((Math.random() * 60) | 0);
+    g.fillRect(Math.random() * W, Math.random() * H, 1.7, 1.7); }
+  for (let cj = 0; cj < 1700; cj++) { const cv = 96 + ((Math.random() * 60) | 0);
     g.fillStyle = 'rgba(' + cv + ',' + (cv - 18) + ',' + (cv - 42) + ',' + (0.25 + Math.random() * 0.3) + ')';
-    g.beginPath(); g.ellipse(Math.random() * 512, Math.random() * 512, 1.6 + Math.random() * 2.6, 1.2 + Math.random() * 1.8, Math.random() * 3, 0, 7); g.fill(); }
+    g.beginPath(); g.ellipse(Math.random() * W, Math.random() * H, 1.6 + Math.random() * 2.6, 1.2 + Math.random() * 1.8, Math.random() * 3, 0, 7); g.fill(); }
   return c;
 }
 // ダートのバンプ（凹凸）: 色は付けず、斜光で踏み跡が浮くようにする
+// フェーズ28: カラー側に合わせて 512×256 に拡大
 function makeDirtBumpCanvas() {
-  const c = document.createElement('canvas'); c.width = c.height = 256;
-  const g = c.getContext('2d'); g.fillStyle = '#808080'; g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 5200; i++) { const v = 88 + ((Math.random() * 84) | 0);
+  const c = document.createElement('canvas'); c.width = 512; c.height = 256;
+  const g = c.getContext('2d'); g.fillStyle = '#808080'; g.fillRect(0, 0, 512, 256);
+  for (let i = 0; i < 10400; i++) { const v = 88 + ((Math.random() * 84) | 0);
     g.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
-    g.beginPath(); g.ellipse(Math.random() * 256, Math.random() * 256, 1.4 + Math.random() * 3.6, 1 + Math.random() * 2.2, Math.random() * 3, 0, 7); g.fill(); }
-  for (let s = 0; s < 210; s++) { const v2 = 70 + ((Math.random() * 50) | 0);
+    g.beginPath(); g.ellipse(Math.random() * 512, Math.random() * 256, 1.4 + Math.random() * 3.6, 1 + Math.random() * 2.2, Math.random() * 3, 0, 7); g.fill(); }
+  for (let s = 0; s < 420; s++) { const v2 = 70 + ((Math.random() * 50) | 0);
     g.strokeStyle = 'rgba(' + v2 + ',' + v2 + ',' + v2 + ',0.55)'; g.lineWidth = 1.6;
-    const x = Math.random() * 256, y = Math.random() * 256;
+    const x = Math.random() * 512, y = Math.random() * 256;
     g.beginPath(); g.arc(x, y, 3.4 + Math.random() * 2, Math.PI * 0.95, Math.PI * 2.05); g.stroke(); }
   return c;
 }
@@ -2415,7 +2461,7 @@ function initThree() {
   const ground = new THREE.Mesh(new THREE.CircleGeometry(1460, 48), new THREE.MeshStandardMaterial({ map: grassTexture(90, 90), color: 0xc9ccc0, roughness: 1 }));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -0.03; ground.receiveShadow = true; scene.add(ground);
   // 内馬場の芝
-  const infield = new THREE.Mesh(new THREE.CircleGeometry(1, 64), new THREE.MeshStandardMaterial({ map: grassTexture(46, 46, true), color: 0xe3e8da, roughness: 1 })); // 専用の深緑キャンバス＋色味は1人用と同値
+  const infield = new THREE.Mesh(new THREE.CircleGeometry(1, 64), new THREE.MeshStandardMaterial({ map: grassTexture(30, 30, true), color: 0xdfe4d2, roughness: 1 })); // フェーズ28: リピート46→30で繰り返し感を減らし、色味の白飛ばしを少し抑えた
   infield.rotation.x = -Math.PI / 2; infield.scale.set(A - 12.5, B - 12.5, 1); infield.position.y = 0.0; infield.receiveShadow = true; scene.add(infield);
   // ダートコース（1人用の写真風ダート: 蹄跡・ハロー目・踏み荒らし帯＋バンプで凹凸感）
   const dirtTex = new THREE.CanvasTexture(makeDirtCanvas());
@@ -2427,7 +2473,7 @@ function initThree() {
   // 横位置クランプ LAT_MAX=9.7 は元々1人用と同値で、最内まで寄せたときの
   // 余白は ダート端まで 11.5-9.69≒1.8m / ラチまで 12.4-9.69≒2.7m になる。
   // 旧寸法（ダート23.4・ラチ±12.6）は余白が約0.2m広く「壁が遠い」感覚だった。
-  const dirt = ribbon(0, 23.0, 0.02, dirtMatRef, 7); // フェーズ19: タイル長を1人用（7m）に統一。旧18mでは地面の模様が大きく流れが遅く見えた
+  const dirt = ribbon(0, 23.0, 0.02, dirtMatRef, 14); // フェーズ28: タイル長 7→14m（1024幅キャンバスで密度は維持しつつ繰り返し周期を半分に）
   scene.add(dirt);
   // コース両端の白線
   const lineMat = new THREE.MeshStandardMaterial({ color: 0xf5f2e8, roughness: 1 });
@@ -2471,6 +2517,19 @@ let finishTimes = new Map(); // nickname -> サーバー確定ゴール時刻(�
 let flashDone = false, photoShownAt = 0, photoActive = false;
 let replayFrames = [], replayAcc = 0, replayOrder = [];
 let replayMode = false, replayT = 0, replaySpeed = 1, replayLast = 0;
+/* フェーズ28: 僅差リプレイ（1着-2着が僅差のときだけの特別演出つきリプレイ）。
+   閾値 0.12秒の根拠: 全頭NPCシミュレーション480レースの着差分布で 91/480=19.0%
+   （約5レースに1回）、馬身換算では約2馬身以内。写真判定の閾値0.17秒より狭く、
+   「写真判定の中でも特に際どい決着」だけを特別扱いする。 */
+const CLOSE_GAP_SEC = 0.12;
+let closeInfo = null;      // { gap, term, first, second }（standings の1・2着。time はサーバー確定時刻）
+let closeMode = false;     // 僅差リプレイ再生中
+let closePhase = 'run';    // run（1倍速）→ slow（0.3倍速）→ freeze（静止）→ photo（写真判定絵）
+let closeTFinish = 0;      // リプレイ時刻における勝ち馬のゴール通過点（実フレームから算出）
+let closeFreezeUntil = 0, closePhotoUntil = 0; // 実時間(ms)の期限
+let closeFreezeMs = 1700, closePhotoMs = 2400; // フリーズ/写真の表示時間（検証用フックでのみ変更可）
+let closeCaptionKey = '';  // 実況キャプションの出し分けキー
+let closeAutoDone = false; // 自動再生は1レース1回だけ
 let gateGroup = null, gateDoors = [], gateTow = 0, dirtMatRef = null;
 let gateDoorOpen = 0, gateDoorTarget = 0; // 前扉の開き具合 0=閉 → 1=全開（1人用と同じ0.45秒で開く）
 let watchFocusNick = null; // 観戦HUDの対象（買い目の馬 or 先頭）
@@ -2602,6 +2661,7 @@ function setupField(field) {
   foulCount = 0; contactT = 0; selfFoulCd = 0; foulCdMap.clear();
   finishTimes = new Map(); flashDone = false; photoShownAt = 0; photoActive = false;
   replayFrames = []; replayAcc = 0; gateTow = 0; myGateT = 0;
+  closeInfo = null; closeMode = false; closeAutoDone = false; closePhase = 'run';
   $('foulTag').textContent = '反則 0回'; $('foulTag').classList.remove('foul-bad');
   $('photoUI').style.display = 'none'; $('photoCanvas').style.display = 'none';
   $('foulBanner').style.display = 'none';
@@ -3172,23 +3232,139 @@ function startReplay() {
 }
 function endReplay() {
   replayMode = false;
+  closeMode = false; closePhase = 'run';
   $('replayBar').style.display = 'none';
+  $('photoUI').style.display = 'none';
+  $('photoTitle').textContent = '📸 写真判定中…';
+  const cm = $('commentary'); cm.classList.remove('big'); cm.style.display = 'none';
+  $('btnReplaySpeed').textContent = '▶ 1倍速';
   $('raceWrap').classList.add('hidden');
   $('screenResult').classList.remove('hidden');
 }
 $('btnReplay').addEventListener('click', startReplay);
 $('btnReplayExit').addEventListener('click', endReplay);
 $('btnReplaySpeed').addEventListener('click', () => {
+  if (closeMode) return; // 僅差リプレイ中は速度固定（演出の時計を崩さない）
   replaySpeed = replaySpeed === 1 ? 2 : replaySpeed === 2 ? 4 : 1;
   $('btnReplaySpeed').textContent = `▶ ${replaySpeed}倍速`;
 });
+
+/* ---------- 僅差リプレイ（フェーズ28） ----------
+   判定は純粋関数 closeFinishOf（結果の standings だけから決める）。
+   再生は通常リプレイと同じ replayFrames / replayFrameAt を使い、時計は
+   全馬共通の replayT ひとつだけ（過去の「自分だけスロー」バグを混ぜない）。 */
+function closeFinishOf(standings) {
+  if (!standings || standings.length < 2) return null;
+  const a = standings[0], b = standings[1];
+  if (!a || !b || a.time == null || b.time == null) return null;
+  const gap = b.time - a.time;
+  if (!(gap >= 0) || gap > CLOSE_GAP_SEC + 1e-9) return null; // 1e-9 は時刻差の浮動小数点誤差の吸収
+  return { gap, term: marginTerm(gap), first: a, second: b };
+}
+/* 勝ち馬（replayOrder の idx）が実フレーム上で決勝線を越えるリプレイ時刻を補間で求める */
+function replayCrossTime(idx) {
+  const F = replayFrames;
+  for (let i = 0; i < F.length; i++) {
+    if (F[i].d[idx] >= RACE_DIST) {
+      if (i === 0) return F[0].t;
+      const a = F[i - 1], b = F[i];
+      const k = (RACE_DIST - a.d[idx]) / Math.max(0.0001, b.d[idx] - a.d[idx]);
+      return a.t + (b.t - a.t) * clamp(k, 0, 1);
+    }
+  }
+  return null;
+}
+function replayCaption(text, big) {
+  const el = $('commentary');
+  el.textContent = text; el.style.display = 'block';
+  el.classList.toggle('big', !!big);
+}
+function startCloseReplay() {
+  if (!closeInfo || replayFrames.length < 10) return false;
+  const wi = replayOrder.indexOf(closeInfo.first.nickname);
+  const si = replayOrder.indexOf(closeInfo.second.nickname);
+  if (wi < 0 || si < 0) return false;
+  const tF = replayCrossTime(wi);
+  if (tF == null) return false;
+  startReplay();
+  closeMode = true; closePhase = 'run'; closeCaptionKey = '';
+  closeTFinish = tF;
+  replayT = Math.max(replayFrames[0].t, tF - 14); // ゴール14秒前から
+  $('btnReplaySpeed').textContent = '🎬 僅差リプレイ';
+  replayCaption(`🔥 僅差リプレイ ― ${closeInfo.first.horseName} vs ${closeInfo.second.horseName}`);
+  return true;
+}
+$('btnCloseReplay').addEventListener('click', startCloseReplay);
+/* 実況キャプション: 先頭（勝ち馬）の残り距離と2頭の間隔で出し分ける */
+function updateCloseCaptions(fr) {
+  if (!closeInfo) return;
+  const wi = replayOrder.indexOf(closeInfo.first.nickname);
+  const si = replayOrder.indexOf(closeInfo.second.nickname);
+  if (wi < 0 || si < 0) return;
+  const remain = RACE_DIST - fr.d[wi];
+  const gapM = Math.abs(fr.d[wi] - fr.d[si]);
+  let key = '', text = '';
+  if (closePhase === 'freeze' || closePhase === 'photo') return; // フリーズ/写真中は専用表示
+  if (remain <= 55 && gapM < 1.2) { key = 'dead'; text = '並んだ！！ 勝負はゴールまで分からない！'; }
+  else if (remain <= 55) { key = 'r50'; text = '残り50m！'; }
+  else if (remain <= 105) { key = 'r100'; text = '残り100m！ 決着は目前！'; }
+  else { key = 'open'; text = `🔥 僅差リプレイ ― ${closeInfo.first.horseName} vs ${closeInfo.second.horseName}`; }
+  if (key !== closeCaptionKey) { closeCaptionKey = key; replayCaption(text); }
+}
+/* ゴール瞬間のフリーズ開始: 大きな着差表示＋歓声 */
+function onCloseFreeze() {
+  replayCaption(`🏁 ${closeInfo.term}！！\n${closeInfo.first.horseName} が ${closeInfo.second.horseName} を${closeInfo.term}で下した！`, true);
+  sfx('cheer');
+}
+/* フリーズ後: 写真判定の絵（既存 drawPhotoFinish）に繋げる */
+function showClosePhoto() {
+  $('photoTitle').textContent = `📸 写真判定 ― ${closeInfo.term}`;
+  $('photoUI').style.display = 'flex';
+  drawPhotoFinish([closeInfo.first, closeInfo.second].map(p => ({ horseName: p.horseName, horseId: p.horseId })), closeInfo.gap);
+  const cm = $('commentary'); cm.classList.remove('big'); cm.style.display = 'none';
+}
+/* 僅差リプレイのカメラ: ゴール板の横・低い位置から2頭の真ん中を見る（slow以降） */
+function closeCamera(fr) {
+  const wi = replayOrder.indexOf(closeInfo.first.nickname);
+  const si = replayOrder.indexOf(closeInfo.second.nickname);
+  const a = trackPoint(fr.d[wi], fr.l[wi]), b = trackPoint(fr.d[si], fr.l[si]);
+  const midLane = (fr.l[wi] + fr.l[si]) / 2;
+  const fp = trackPoint(RACE_DIST, midLane);
+  const rx = -fp.dz, rz = fp.dx; // コース横方向（放送カメラと同じ流儀）
+  const k = clamp((replayT - (closeTFinish - 3.5)) / 3.5, 0, 1); // ゴールに向け少し寄る
+  const side = 12.5 - 3.2 * k, ahead = 7 - 2.5 * k;
+  camera.position.set(fp.x + rx * side + fp.dx * ahead, 1.7, fp.z + rz * side + fp.dz * ahead);
+  camera.lookAt((a.x + b.x) / 2, 1.25, (a.z + b.z) / 2);
+  if (camera.fov !== 50) { camera.fov = 50; camera.updateProjectionMatrix(); }
+}
 function replayLoop(now) {
   if (!replayMode) return;
   requestAnimationFrame(replayLoop);
   const dt = Math.min(0.05, (now - replayLast) / 1000); replayLast = now;
-  replayT += dt * replaySpeed;
+  /* 僅差リプレイのフェーズ制御（フェーズ28）。spd は全馬共通の replayT にだけ
+     掛かる倍率で、馬ごとの時計は存在しない（順位が入れ替わる余地がない）。 */
+  let spd = replaySpeed;
+  if (closeMode) {
+    if (closePhase === 'freeze') {
+      spd = 0;
+      if (now >= closeFreezeUntil) { closePhase = 'photo'; closePhotoUntil = now + closePhotoMs; showClosePhoto(); }
+    } else if (closePhase === 'photo') {
+      spd = 0.25;
+      if (now >= closePhotoUntil) { endReplay(); return; }
+    } else {
+      spd = replayT >= closeTFinish - 3.5 ? 0.3 : 1;
+      closePhase = spd === 0.3 ? 'slow' : 'run';
+      if (replayT + dt * spd >= closeTFinish) {
+        replayT = closeTFinish; spd = 0; // ゴール瞬間でぴたりと止める
+        closePhase = 'freeze'; closeFreezeUntil = now + closeFreezeMs;
+        onCloseFreeze();
+      }
+    }
+  }
+  replayT += dt * spd;
   const fr = replayFrameAt(replayT);
   if (!fr) { endReplay(); return; }
+  if (closeMode) updateCloseCaptions(fr);
   replayOrder.forEach((nick, i) => {
     const mesh = horseMeshes.get(nick); if (!mesh) return;
     const p = trackPoint(fr.d[i], fr.l[i]);
@@ -3196,22 +3372,26 @@ function replayLoop(now) {
     mesh.rotation.y = Math.atan2(p.dx, p.dz);
     const anim = mesh.userData.anim;
     if (anim) {
-      // リプレイの脚も1人用と同一式: mixer.update(dt*(0.25+sf*1.0)*replaySpeed)
+      // リプレイの脚も1人用と同一式: mixer.update(dt*(0.25+sf*1.0)*spd)
       const prevD = mesh.userData.replayDist == null ? fr.d[i] : mesh.userData.replayDist;
       const rdd = Math.max(0, fr.d[i] - prevD);
       mesh.userData.replayDist = fr.d[i];
-      const estSpd = dt * replaySpeed > 0 ? rdd / (dt * replaySpeed) : 0;
-      anim.mixer.update(dt * (0.25 + clamp(estSpd / 17, 0, 1.15) * 1.0) * replaySpeed);
+      const estSpd = dt * spd > 0 ? rdd / (dt * spd) : 0;
+      anim.mixer.update(dt * (0.25 + clamp(estSpd / 17, 0, 1.15) * 1.0) * spd);
     }
   });
-  // 放送カメラで先頭を追う
-  let li = 0; fr.d.forEach((v, i) => { if (v > fr.d[li]) li = i; });
-  const lp = trackPoint(fr.d[li], fr.l[li]);
-  const rx = -lp.dz, rz = lp.dx;
-  camera.position.set(lp.x + rx * 13.5 - lp.dx * 3, 5.4, lp.z + rz * 13.5 - lp.dz * 3);
-  camera.lookAt(lp.x + lp.dx * 5, 1.3, lp.z + lp.dz * 5);
-  if (camera.fov !== 58) { camera.fov = 58; camera.updateProjectionMatrix(); }
-  if (replayT >= replayFrames[replayFrames.length - 1].t + 0.5) { endReplay(); return; }
+  if (closeMode && closePhase !== 'run') {
+    closeCamera(fr); // ゴール板横の低いカメラ（slow/freeze/photo）
+  } else {
+    // 放送カメラで先頭を追う
+    let li = 0; fr.d.forEach((v, i) => { if (v > fr.d[li]) li = i; });
+    const lp = trackPoint(fr.d[li], fr.l[li]);
+    const rx = -lp.dz, rz = lp.dx;
+    camera.position.set(lp.x + rx * 13.5 - lp.dx * 3, 5.4, lp.z + rz * 13.5 - lp.dz * 3);
+    camera.lookAt(lp.x + lp.dx * 5, 1.3, lp.z + lp.dz * 5);
+    if (camera.fov !== 58) { camera.fov = 58; camera.updateProjectionMatrix(); }
+  }
+  if (!closeMode && replayT >= replayFrames[replayFrames.length - 1].t + 0.5) { endReplay(); return; }
   renderer.render(scene, camera);
 }
 
@@ -3662,6 +3842,85 @@ if (new URLSearchParams(location.search).has('orbit') || new URLSearchParams(loc
       updateGuide();
       return $('guide').textContent;
     },
+    // 検証用（フェーズ28）: 僅差リプレイの状態
+    closeProbe: () => ({
+      CLOSE_GAP_SEC, closeMode, closePhase, replayMode,
+      replayT: +replayT.toFixed(2), closeTFinish: closeTFinish ? +closeTFinish.toFixed(2) : null,
+      frames: replayFrames.length,
+      closeInfo: closeInfo ? { gap: +closeInfo.gap.toFixed(3), term: closeInfo.term, first: closeInfo.first.nickname, second: closeInfo.second.nickname } : null,
+      btnCloseHidden: $('btnCloseReplay').classList.contains('hidden'),
+      btnCloseText: $('btnCloseReplay').textContent,
+      caption: $('commentary').textContent, captionBig: $('commentary').classList.contains('big'),
+      photoShown: $('photoUI').style.display === 'flex', photoTitle: $('photoTitle').textContent,
+    }),
+    // 検証用（フェーズ28）: 判定の純粋関数チェック（仮の standings で発動/非発動を見る）
+    closeTry: (gapSec) => {
+      const st = [
+        { nickname: 'A', horseName: 'A馬', horseId: 'deep', time: 100 },
+        { nickname: 'B', horseName: 'B馬', horseId: 'sodashi', time: 100 + gapSec },
+        { nickname: 'C', horseName: 'C馬', horseId: 'kitasan', time: 101.5 },
+      ];
+      const r = closeFinishOf(st);
+      return r ? { triggered: true, gap: +r.gap.toFixed(3), term: r.term } : { triggered: false };
+    },
+    // 検証用（フェーズ28）: 実フレームで「スローモ区間の順位保存」を数値検証。
+    // 勝ち馬のゴール通過時刻・その瞬間の2頭の間隔(m)・2着の通過遅れ(秒)・
+    // ゴール前1秒での順位入れ替わり回数を返す
+    closeOrderCheck: () => {
+      if (!closeInfo || replayFrames.length < 10) return null;
+      const wi = replayOrder.indexOf(closeInfo.first.nickname);
+      const si = replayOrder.indexOf(closeInfo.second.nickname);
+      if (wi < 0 || si < 0) return null;
+      const tF = replayCrossTime(wi);
+      if (tF == null) return null;
+      const tS = replayCrossTime(si);
+      const frF = replayFrameAt(tF);
+      let flips = 0, prev = 0;
+      for (let t = Math.max(replayFrames[0].t, tF - 1.0); t <= tF; t += 0.01) {
+        const g = replayFrameAt(t).d[wi] - replayFrameAt(t).d[si];
+        const s = Math.sign(g); if (prev && s && s !== prev) flips++; if (s) prev = s;
+      }
+      return {
+        tFinish: +tF.toFixed(2), winnerDistAtTF: +frF.d[wi].toFixed(2),
+        gapAtFinishM: +(frF.d[wi] - frF.d[si]).toFixed(2),
+        runnerUpDelaySec: tS != null ? +(tS - tF).toFixed(3) : null,
+        serverGapSec: +closeInfo.gap.toFixed(3),
+        flipsLastSec: flips,
+      };
+    },
+    // 検証用（フェーズ28）: 直近レースの実フレーム＋実際の1・2着で、着差だけを
+    // 仮の僅差に差し替えて僅差リプレイを強制発動する（演出パイプラインの確認用）
+    startCloseReplayDemo: (gapSec) => {
+      if (!lastStandings || lastStandings.length < 2) return false;
+      closeInfo = { gap: gapSec, term: marginTerm(gapSec), first: lastStandings[0], second: lastStandings[1] };
+      return startCloseReplay();
+    },
+    // 検証用（フェーズ28）: 僅差リプレイ再生中にゴール手前へシークする
+    // （ヘッドレス環境は rAF が極端に遅く、14秒ぶんの通常速区間を待てないため。
+    // フェーズ遷移そのものは通常コードのまま通る）
+    closeSeek: (secBeforeFinish) => {
+      if (!closeMode) return false;
+      replayT = Math.max(replayFrames[0].t, closeTFinish - secBeforeFinish);
+      return true;
+    },
+    // 検証用（フェーズ28）: サーバーエンジン実出力のフレーム列（実レースを
+    // recordReplay と同形式で記録したもの）を投入し、本番の僅差リプレイ機構を
+    // そのまま通す。判定は本番の closeFinishOf を使う（僅差でなければ stage しない）
+    closeStageSim: async (data) => {
+      watchMode = true;
+      applyRaceMeta({ distance: data.raceDist, going: { id: 'ryo', name: '良', note: '' }, mode: 'watch' });
+      await modelReady;
+      setupField(data.field);
+      replayFrames = data.frames; replayOrder = data.order.slice();
+      lastStandings = data.standings;
+      closeInfo = closeFinishOf(data.standings);
+      if (!closeInfo) return { staged: false, reason: 'not-close' };
+      $('screenHome').classList.add('hidden'); $('walletBar').classList.add('hidden');
+      const ok = startCloseReplay();
+      return { staged: ok, gap: +closeInfo.gap.toFixed(3), term: closeInfo.term, tF: +closeTFinish.toFixed(2), frames: replayFrames.length };
+    },
+    // 検証用（フェーズ28）: フリーズ/写真の表示時間を一時的に延ばす（撮影用）
+    closeSetTiming: (f, p) => { if (f) closeFreezeMs = f; if (p) closePhotoMs = p; return { closeFreezeMs, closePhotoMs }; },
     // 検証用: 名前タグの付与状況（人間の馬だけに付いているか・表示状態）
     nameTags: () => {
       const out = [];
@@ -4243,6 +4502,8 @@ function showResults(m) {
       photoPair = [a, b]; photoDiff = b.time - a.time; break;
     }
   }
+  // 僅差リプレイ判定（フェーズ28）: 1着-2着の着差が CLOSE_GAP_SEC 以内なら特別演出の対象
+  closeInfo = closeFinishOf(standings);
   const showPanel = () => {
     $('raceWrap').classList.add('hidden');
     $('screenResult').classList.remove('hidden');
@@ -4264,15 +4525,27 @@ function showResults(m) {
       standings.map(x => `<tr${x.nickname === myName ? ' style="background:rgba(255,213,79,.25)"' : ''}><td>${x.place}着${x.rawPlace && x.rawPlace !== x.place ? `<small>（${x.rawPlace}位入線）</small>` : ''}</td><td>${x.jockey || x.nickname}</td><td>${x.horseName}</td><td>${x.time != null ? fmtRaceTime(x.time) : '—'}${x.prize ? ' ／ +' + fmtG(x.prize) + 'G' : ''}</td></tr>`).join('');
     $('finalTime').textContent = !isWatch && me ? `あなたのタイム ${fmtRaceTime(me.time)} ／ 馬場 ${meta.going ? meta.going.name : ''} ／ 反則 ${me.fouls || 0}回` : '';
     $('btnReplay').classList.toggle('hidden', replayFrames.length < 10);
+    const cb = $('btnCloseReplay');
+    cb.classList.toggle('hidden', !closeInfo || replayFrames.length < 10);
+    if (closeInfo) cb.textContent = `🔥 僅差リプレイ（${closeInfo.term}）`;
     refreshProfile(); // 所持金・戦績はサーバー確定値で更新
+  };
+  // 僅差の決着は、結果画面を出したあと自動で1回だけ僅差リプレイを再生する
+  const afterPanel = () => {
+    showPanel();
+    if (closeInfo && !closeAutoDone) {
+      closeAutoDone = true;
+      setTimeout(() => { if (!$('screenResult').classList.contains('hidden')) startCloseReplay(); }, 1000);
+    }
   };
   if (photoPair) {
     // 接戦は写真判定の絵を見せてから結果へ（1人用と同じ見せ方）
+    $('photoTitle').textContent = '📸 写真判定中…';
     $('photoUI').style.display = 'flex';
     drawPhotoFinish(photoPair.map(p => ({ horseName: p.horseName, horseId: p.horseId })), photoDiff);
-    setTimeout(() => { $('photoUI').style.display = 'none'; showPanel(); }, 2150);
+    setTimeout(() => { $('photoUI').style.display = 'none'; afterPanel(); }, 2150);
   } else {
-    setTimeout(showPanel, isWatch ? 600 : (me ? 1200 : 0));
+    setTimeout(afterPanel, isWatch ? 600 : (me ? 1200 : 0));
   }
 }
 $('btnAgain').onclick = () => {
