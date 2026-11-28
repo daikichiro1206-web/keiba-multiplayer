@@ -511,6 +511,17 @@ let roomState = null;
 const TRACK_LEN = 2000; // 物理コース1周（ゴール固定）
 let RACE_DIST = 2000;   // 今回のレース距離（1200/1600/2000/2400）。2400は1周＋400m（スタートがゴール奥側）
 const physOff = () => TRACK_LEN - RACE_DIST; // レース座標→物理コース座標のオフセット
+/* ---------- フェーズ29: 空と太陽（ユーザー指定） ----------
+   「夕方みたいなオレンジと水色がグラデーションしてる綺麗な空。でも全然昼寄り。
+    太陽が1個あって、そっから日光が刺してる感じ」に応える作り替え。
+   太陽方向は空ドームのシェーダー（円盤＋グロー）と平行光源でこの定数を完全共有し、
+   見える太陽と影の方向を一致させる。方位は従来の水平成分 (+40,+60) を維持し、
+   高度だけ 69°（ほぼ真上）→35° に下げた: 決勝直線を +Z へ走る馬の前方左上に
+   太陽が見え、影の長さは対象の高さ×約1.43（夕方感はあるが不自然に長くない）。 */
+const SUN_EL = 35 * Math.PI / 180;               // 太陽高度 35°
+const SUN_AZ = Math.atan2(60, 40);               // 太陽方位（+X軸から+Z側へ。従来の水平方向を維持）
+const SUN_DIR = new THREE.Vector3(Math.cos(SUN_EL) * Math.cos(SUN_AZ), Math.sin(SUN_EL), Math.cos(SUN_EL) * Math.sin(SUN_AZ)).normalize(); // 太陽への単位ベクトル
+const SUN_OFF = SUN_DIR.clone().multiplyScalar(203); // 太陽光のプレイヤー追随オフセット（従来と同じ距離203。影カメラ far 340 内に収まる）
 let racing = false, raceStartAt = 0, lastFrame = 0, posTimer = null;
 let runners = new Map(); // nickname -> {dist, lane, speed, npc, horseId, smoothDist, smoothLane, animSpeed, phase}
 
@@ -899,14 +910,14 @@ function initPreview() {
   pvRenderer.toneMapping = THREE.ACESFilmicToneMapping;
   pvRenderer.toneMappingExposure = 1.06; // レース側の色味調整（フェーズ15）に合わせる
   pvScene = new THREE.Scene();
-  pvScene.background = new THREE.Color(0xa7bccf);
+  pvScene.background = new THREE.Color(0x9fcdf0); // フェーズ29: レース側の空の中間色に合わせる
   pvCamera = new THREE.PerspectiveCamera(45, (canvas.clientWidth || 640) / 220, 0.1, 100);
   pvCamera.position.set(3.0, 1.8, 3.4);
   pvCamera.lookAt(0, 1.0, 0);
   const ground = new THREE.Mesh(new THREE.CircleGeometry(7, 32), new THREE.MeshStandardMaterial({ color: 0x74905c, roughness: 1 }));
   ground.rotation.x = -Math.PI / 2; pvScene.add(ground);
   pvScene.add(new THREE.HemisphereLight(0xcfe2ee, 0x54604a, 0.75)); // 1人用プレビューと同値
-  const sun = new THREE.DirectionalLight(0xffe9c2, 1.9); sun.position.set(3, 6, 2.5); pvScene.add(sun);
+  const sun = new THREE.DirectionalLight(0xffd9a3, 1.9); sun.position.copy(SUN_DIR).multiplyScalar(8); pvScene.add(sun); // フェーズ29: レース側の太陽（SUN_DIR・暖色）に方向と色を合わせる
   pvGroup = new THREE.Group(); pvScene.add(pvGroup);
   pvLast = performance.now();
   requestAnimationFrame(pvLoop);
@@ -2412,8 +2423,8 @@ function buildVenueDressing() {
 function initThree() {
   if (renderer) return;
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xa9c9e6);
-  scene.fog = new THREE.Fog(0xd3d8d2, 240, 1150); // 遠景の霞（1人用と同値）
+  scene.background = new THREE.Color(0x9fcdf0); // 空ドームの色味に合わせる（ドームが覆うため通常は見えない）
+  scene.fog = new THREE.Fog(0xe7dcc8, 240, 1150); // フェーズ29: 地平線の柔らかいオレンジに馴染む暖色寄りの霞に変更（範囲は従来どおり）
   camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.08, 3200);
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.75));
@@ -2424,31 +2435,49 @@ function initThree() {
   renderer.toneMappingExposure = 1.08; // フェーズ22: 「黒っぽく濃い・硬い」との再評価を受け、影側を持ち上げて柔らかくする方向で再調整（下記の光も連動。白飛びを避けるため小幅）
   $('raceWrap').appendChild(renderer.domElement);
   bindDragLook(renderer.domElement);
-  // 空: グラデーションドーム（1人用のシェーダーを移植。雲なし）
+  // 空: グラデーションドーム＋太陽（フェーズ29で作り替え。雲なしは従来どおり）
+  // 地平線の柔らかいオレンジ → 上空の水色。全体の明るさは昼主体を維持する。
+  // 太陽は円盤＋多層グローを同じシェーダーで描く（ポストプロセスなしで軽い）。
+  // 視線方向はカメラ位置基準で計算するので、ドーム中心（原点）から離れた
+  // コース上のどこから見ても太陽が正しい方位・高度に固定される。
+  // ※ 1人用と同一という従来方針からの意図的な逸脱（ユーザー指定の空にするため）
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
     uniforms: {
-      top: { value: new THREE.Color(0x597ea3) }, mid: { value: new THREE.Color(0xa7bccf) },
-      hor: { value: new THREE.Color(0xe9e7da) }, low: { value: new THREE.Color(0xcfd6cf) },
+      top: { value: new THREE.Color(0x4f9fd8) }, mid: { value: new THREE.Color(0x9fcdf0) },
+      hor: { value: new THREE.Color(0xffd9a6) }, low: { value: new THREE.Color(0xd9d2bd) },
+      sunDir: { value: SUN_DIR },
     },
-    vertexShader: 'varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+    vertexShader: 'varying vec3 vDir; void main(){ vec4 wp=modelMatrix*vec4(position,1.0); vDir=wp.xyz-cameraPosition; gl_Position=projectionMatrix*viewMatrix*wp; }',
     fragmentShader: [
       'uniform vec3 top; uniform vec3 mid; uniform vec3 hor; uniform vec3 low;',
-      'varying vec3 vP;',
+      'uniform vec3 sunDir;',
+      'varying vec3 vDir;',
       'void main(){',
-      '  float h=normalize(vP).y;',
-      '  vec3 c = h>0.16 ? mix(mid, top, smoothstep(0.16,0.75,h))',
-      '                  : mix(hor, mid, smoothstep(0.015,0.16,h));',
-      '  if(h<0.015) c = mix(low, hor, smoothstep(-0.08,0.015,h));',
+      '  vec3 dir=normalize(vDir);',
+      '  float h=dir.y;',
+      '  vec3 c = h>0.14 ? mix(mid, top, smoothstep(0.14,0.72,h))',
+      '                  : mix(hor, mid, smoothstep(0.0,0.14,h));',
+      '  if(h<0.0) c = mix(low, hor, smoothstep(-0.08,0.0,h));',
+      '  float sd=max(dot(dir, sunDir), 0.0);',
+      // 太陽側の地平線オレンジを強める（空全体を夕方色に染めず、太陽の周りだけ暖かく）
+      '  c += vec3(1.0,0.55,0.22)*pow(sd,5.0)*0.14*(1.0-smoothstep(0.0,0.5,h));',
+      // 日光のグロー（広いハロー＋中グロー＋芯）: 「光が刺す」感じをスプライトなしで表現
+      '  c += vec3(1.0,0.72,0.38)*pow(sd,18.0)*0.16;',
+      '  c += vec3(1.0,0.85,0.55)*pow(sd,120.0)*0.38;',
+      '  c += vec3(1.0,0.93,0.75)*pow(sd,800.0)*0.55;',
+      // 太陽円盤（1個はっきり。縁はわずかにぼかす）
+      '  float disc=smoothstep(0.99955,0.99982,sd);',
+      '  c=mix(c, vec3(1.30,1.16,0.94), disc);',
       '  gl_FragColor=vec4(c,1.0);',
       '}',
     ].join('\n'),
   });
   const sky = new THREE.Mesh(new THREE.SphereGeometry(1480, 32, 18), skyMat);
   sky.frustumCulled = false; scene.add(sky);
-  // 光: 真上寄りの太陽（影つき）＋空の反射＋弱いフィル（1人用と同値）
+  // 光: 太陽（影つき）＋空の反射＋弱いフィル。太陽の方向は SUN_DIR（空の円盤と一致）
   scene.add(new THREE.HemisphereLight(0xc4d6e2, 0x4c5540, 0.68)); // 色は1人用と同値。フェーズ22: 強さ 0.52→0.68 で影側（馬の腹・地面の影）を持ち上げ黒つぶれを減らす
-  sunLight = new THREE.DirectionalLight(0xffe9c2, 2.30); // フェーズ22: 2.45→2.30。直射を少し弱め、環境光との比を下げてコントラストの「硬さ」を和らげる
+  sunLight = new THREE.DirectionalLight(0xffd9a3, 2.30); // フェーズ29: 色を 0xffe9c2→0xffd9a3 と暖色寄りに（夕方の日光）。強さ 2.30 はフェーズ22のバランスを維持し、昼の明るさを崩さない
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.set(2048, 2048);
   sunLight.shadow.camera.left = -42; sunLight.shadow.camera.right = 42;
@@ -3187,7 +3216,7 @@ function updateWatchCamera(dt) {
     camera.lookAt(lp.x, 1.4, lp.z);
   }
   if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 5); camera.updateProjectionMatrix(); }
-  if (sunLight) { sunLight.position.set(lp.x + 40, 190, lp.z + 60); sunLight.target.position.set(lp.x, 0, lp.z); }
+  if (sunLight) { sunLight.position.set(lp.x + SUN_OFF.x, SUN_OFF.y, lp.z + SUN_OFF.z); sunLight.target.position.set(lp.x, 0, lp.z); }
   watchFocusNick = (camMode === 'bet' && betState && betState.picks.length)
     ? (([...runners.entries()].find(([, r]) => betState.picks.includes(r.horseName)) || [])[0] || lead) : lead;
 }
@@ -4101,6 +4130,8 @@ function orbitCamera(dist) {
   // スタート直後の集団（全頭＋騎手）とスタンドが同じ画角に入る。
   if (DEBUG_CAM === 'stand') {        // メインスタンドの正面寄り
     camera.position.set(A - 265, 13, -72); camera.lookAt(A + 22, 6, 6);
+  } else if (DEBUG_CAM === 'sunset') { // フェーズ29検証用: 決勝直線の内側から太陽方向（方位56°・仰角約32°）を見る。太陽（高度35°）が画面中央付近に来て、円盤とグローをHUDに隠されず確認できる
+    camera.position.set(A - 30, 3.2, -95); camera.lookAt(A + 55, 98, 30);
   } else if (DEBUG_CAM === 'back') {  // 向正面スタンド
     camera.position.set(-A + 132, 15, 124); camera.lookAt(-(A + 25), 6, 0);
   } else if (DEBUG_CAM === 'gate') {  // ゲートの斜め前
@@ -4115,7 +4146,7 @@ function orbitCamera(dist) {
   }
   const p = trackPoint(dist, latToLane(myLat));
   if (sunLight) {
-    sunLight.position.set(p.x + 40, 190, p.z + 60);
+    sunLight.position.set(p.x + SUN_OFF.x, SUN_OFF.y, p.z + SUN_OFF.z);
     sunLight.target.position.set(p.x, 0, p.z);
   }
 }
@@ -4195,10 +4226,10 @@ function updateCamera(dt) {
   const myMesh = horseMeshes.get(myName);
   if (myMesh) setOwnRiderFP(myMesh.userData.vis, true);
   // 太陽はプレイヤーに追随（影の範囲を常に馬群の上に保つ）。オフセットは
-  // 1人用と同一の (+40, 190, +60): 旧 (+20, 96, +12) は真上すぎて影が短く、
-  // 光の方向感が無く平たく見えた。影カメラの far 340 に対して距離 約203 で収まる
+  // SUN_OFF（フェーズ29: 高度35°・従来と同じ距離203で影カメラ far 340 に収まる）。
+  // 空に見える太陽円盤（SUN_DIR）と方向が一致するので、影もその方向に落ちる
   if (sunLight) {
-    sunLight.position.set(p.x + 40, 190, p.z + 60);
+    sunLight.position.set(p.x + SUN_OFF.x, SUN_OFF.y, p.z + SUN_OFF.z);
     sunLight.target.position.set(p.x, 0, p.z);
   }
 }
