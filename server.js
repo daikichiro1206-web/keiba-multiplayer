@@ -432,8 +432,13 @@ const NPC_PACE = {
 const NPC_STYLE_PROFILE = {
   nige:   { early: 1.030, mid: 1.004, kick: 0.986, kickFrom: 330 },
   senko:  { early: 1.014, mid: 1.006, kick: 1.010, kickFrom: 430 },
-  sashi:  { early: 0.990, mid: 1.000, kick: 1.032, kickFrom: 480 },
-  oikomi: { early: 0.977, mid: 0.994, kick: 1.050, kickFrom: 400 },
+  /* 差し・追込の early/mid は1人用より僅かに引き上げた（仕様§5対応の意図的な
+     逸脱）: 1人用の値のままだと馬群が縦長に伸びた時点で差し・追込の赤字が
+     約80〜100mに達し、末脚（kick倍率）だけでは物理的に届かなかった
+     （実測: 2000m良で追込の平均着順17.2/18、勝ち馬は先行・逃げのみ）。
+     実競馬の追込馬は中盤も勝ち負けの圏内に脚を溜める、という範囲の調整 */
+  sashi:  { early: 0.994, mid: 1.003, kick: 1.040, kickFrom: 480 },
+  oikomi: { early: 0.988, mid: 1.000, kick: 1.060, kickFrom: 430 },
 };
 /* 距離適性（1人用 aptMulOf と同一: 距離カテゴリの適性値で ±0.25%） */
 const distCatIdxOf = len => len <= 1000 ? 0 : len <= 1500 ? 1 : 2;
@@ -454,10 +459,31 @@ function npcIsCorner(room, dist) {
   return (s >= 654.5 && s < 1000.1) || s >= 1654.6;
 }
 function npcPhaseIdx(room, dist) { const L = room.raceDist || 2000; return dist < L * 0.3 ? 0 : dist < L * 0.6 ? 1 : dist < L * 0.8 ? 2 : 3; }
-/* ゲートの出遅れ抽選（1人用 startRace の NPC 分布と同一） */
-function rollGateT() {
+/* 個体特性の決定的な導出（1人用の plan/homeLat が num 由来の位相で個体差を
+   作るのと同じ流儀: 同じ馬はいつも同じ特性値になり、レースを跨いで安定する。
+   仕様§7の能力値のうち、カタログに無い 加速力・持久力・コーナリング・
+   瞬発力・気性 をここから個別化する。最高速(base)・距離適性(apt)・
+   馬場適性(heavy) はカタログ値が正） */
+function npcTrait(num, salt) {
+  const x = Math.sin(num * 127.1 + salt * 311.7) * 43758.5453;
+  return x - Math.floor(x); // 0..1
+}
+/* コーナー係数の個体版: コーナリング能力が高い馬ほど、内での利得が大きく
+   外での距離損が小さい（係数を cornerMul で累乗する） */
+function npcCornerFactorFor(room, n) {
+  const f = npcCornerFactor(room, n.dist, n.lat);
+  return n.cornerMul && n.cornerMul !== 1 ? Math.pow(f, n.cornerMul) : f;
+}
+/* ゲートの出遅れ抽選（1人用 startRace の NPC 分布が基準。
+   気性 temper で個別化: 荒い馬ほど大出遅れが増え、穏やかな馬は安定する） */
+function rollGateT(temper) {
+  const t = temper == null ? 0.5 : temper;
+  const pBad = 0.05 + t * 0.16;   // 大出遅れ 5%〜21%
+  const pMid = 0.26 - t * 0.10;   // 小出遅れ 16%〜26%
   const r = Math.random();
-  return r < 0.7 ? Math.random() * 0.4 : (r < 0.9 ? 0.5 + Math.random() * 0.4 : 1.2 + Math.random() * 0.4);
+  if (r < pBad) return 1.2 + Math.random() * 0.4;
+  if (r < pBad + pMid) return 0.5 + Math.random() * 0.4;
+  return Math.random() * 0.4;
 }
 function npcRankOf(view, self) { let r = 1; for (const o of view) if (o !== self && o.dist > self.dist) r++; return r; }
 function npcRaceShapeMod(room, n) {
@@ -465,7 +491,7 @@ function npcRaceShapeMod(room, n) {
   const pr = NPC_STYLE_PROFILE[n.styleKey], p = n.dist / L, rem = L - n.dist;
   let m;
   if (rem < pr.kickFrom) {
-    m = pr.kick;
+    m = pr.kick * (n.burstMul || 1); // 瞬発力の個体差は末脚の伸びに効く
     if (room.paceHeat > 0.25) m *= (n.styleKey === 'sashi' || n.styleKey === 'oikomi') ? 1.012 : 0.994;
   }
   else if (p < 0.32) m = pr.early;
@@ -476,7 +502,7 @@ function npcRaceShapeMod(room, n) {
 function npcMakePlan(styleKey, num, startLat) {
   const pshift = ((num * 7) % 5) - 2;
   const pbase = styleKey === 'nige' ? [1, 1, 1, 1] : styleKey === 'senko' ? [3, 3, 3, 2]
-    : styleKey === 'sashi' ? [11, 11, 8, 3] : [16, 16, 14, 4];
+    : styleKey === 'sashi' ? [11, 10, 7, 3] : [15, 15, 12, 4]; // 差し・追込の目標順位も仕様§5対応で圏内に寄せた（1人用は sashi[11,11,8,3] / oikomi[16,16,14,4]）
   const plan = {
     pos: pbase.map(v => clampN(v + pshift, 1, 18)),
     kick: NPC_STYLE_PROFILE[styleKey].kickFrom,
@@ -517,7 +543,8 @@ function npcAiPace(room, view, n) {
       if (o === n) continue;
       if ((o.styleKey === 'nige' || o.styleKey === 'senko') && npcRankOf(view, o) <= 2 && Math.abs(o.dist - n.dist) < 2.2) {
         n.duel = true;
-        n.duelYield = o.stamina >= stam && !(st === 'nige' && o.styleKey !== 'nige');
+        // 気性の荒い馬（temper>=0.72）は先頭争いで引かず、消耗戦に付き合う
+        n.duelYield = o.stamina >= stam && !(st === 'nige' && o.styleKey !== 'nige') && (n.temper || 0) < 0.72;
         break;
       }
     }
@@ -544,6 +571,9 @@ function npcAiPace(room, view, n) {
     return 'nari';
   }
   if (st === 'sashi') {
+    // 先頭との差が開きすぎたら、中盤でも圏内を保ちにいく（仕様§11の状況判断）
+    let leadGapS = 0; for (const o of view) if (o.dist - n.dist > leadGapS) leadGapS = o.dist - n.dist;
+    if (ph >= 1 && leadGapS > 55 && stam > 45) return 'pushS';
     if (ph <= 1) {
       if (diff <= -3) return 'hold';
       return 'nari';
@@ -554,9 +584,15 @@ function npcAiPace(room, view, n) {
     }
     return 'pushS';
   }
-  // oikomi: 最後の直線まで後方で待つ
+  // oikomi: 最後の直線まで後方で待つ（ただし中盤以降に離されすぎたら圏内へ寄せ始める）
   if (rem > 430) {
-    if (ph >= 2 && diff >= 5) return 'pushS';
+    // 先頭との差が開きすぎたら、フェーズに関わらず圏内を保ちにいく（仕様§11）。
+    // 順位だけ見ていると、馬群が縦長に伸びた時に「定位置の最後方」が
+    // 勝負圏外まで置いていかれるため、距離差でも判断する
+    let leadGap = 0; for (const o of view) if (o.dist - n.dist > leadGap) leadGap = o.dist - n.dist;
+    if (leadGap > 38 && stam > 40) return 'pushS';
+    if (ph >= 2 && diff >= 3) return 'pushS';
+    if (ph === 1 && diff >= 7) return 'pushS'; // 中盤で決定的に離されたら早めに寄せる
     if (diff <= -3) return 'hold';
     return 'nari';
   }
@@ -588,6 +624,18 @@ function npcDecideLat(room, view, n) {
     if (dd > 0.4 && dd < 4.2 && Math.abs(o.lat - n.lat) < 1.15) { blocker = o; break; }
   }
   if (blocker) {
+    /* 最終局面の進路選択（仕様§5）: 仕掛けている馬（pushS/pushL）が前を塞がれたら、
+       ±1レーンだけでなく外へ大きく持ち出して「前に馬のいないレーン」を探す。
+       実競馬の直線で後方勢が外に膨らんで進路を確保する動き。内は距離損が無い
+       代わりに混むので、直線では外側の空きを優先して探す */
+    if (rem < 500 && (n.pace === 'pushS' || n.pace === 'pushL')) {
+      const cands = [n.lat + 1.35, n.lat + 2.7, n.lat + 4.05, n.lat - 1.35];
+      for (const c of cands) {
+        const cl = clampN(c, -LAT_MAX_S, LAT_MAX_S);
+        if (Math.abs(cl - n.lat) < 0.3) continue;
+        if (laneFree(cl, -1.5, 9.0)) { n.targetLat = cl; n.swingLat = cl; n.swingUntil = room.raceClock + 2.8; return; }
+      }
+    }
     const inLat = clampN(n.lat - 1.35, -LAT_MAX_S, LAT_MAX_S), outLat = clampN(n.lat + 1.35, -LAT_MAX_S, LAT_MAX_S);
     const inFree = laneFree(inLat, -1.5, 6.5), outFree = laneFree(outLat, -1.5, 6.5);
     let pick = null;
@@ -625,7 +673,7 @@ function stepNpc(room, view, n, dt, now) {
     const over = n.dist - L;
     const dec = (over < 40 ? 0.7 : (over < 100 ? 1.5 : 2.6)) * SPEED_MULT * SPEED_MULT; // 減速×倍率²＝流し距離を従来と同一に（フェーズ18）
     n.speed = Math.max(0, n.speed - dec * dt);
-    n.dist += n.speed * dt * npcCornerFactor(room, n.dist, n.lat);
+    n.dist += n.speed * dt * npcCornerFactorFor(room, n);
     return;
   }
   n.aiTimer -= dt;
@@ -645,6 +693,10 @@ function stepNpc(room, view, n, dt, now) {
   if (drain < 0) {
     drain *= going.drain; // 馬場: 重いほど全馬の消費増（1人用 stepHorse と同一）
     if (going.id !== 'ryo') drain *= (1 + (1 - (n.heavy || 1)) * (going.id === 'ju' ? 1.1 : 0.55)); // 重馬場適性が高い馬は消費が軽い
+    drain *= (n.endureMul || 1); // 持久力の個体差（仕様§7）
+    // 距離適性（仕様§9）: その距離が苦手な馬は後半に脚が止まりやすく、得意な馬は最後まで持つ
+    const aptHere = (n.apt || [1, 1, 1])[distCatIdxOf(L)] ?? 1;
+    if (n.dist > L * 0.5) { if (aptHere <= 0) drain *= 1.3; else if (aptHere >= 2) drain *= 0.94; }
     if (room.paceHeat > 0.25 && npcRankOf(view, n) <= 3) drain *= 1.18; // ハイペースを作る先行勢は消耗
     if (n.duel) drain *= 1.18;
   }
@@ -678,9 +730,9 @@ function stepNpc(room, view, n, dt, now) {
     }
   }
   if (n.gateT > 0) { n.gateT -= dt; target = Math.min(target, 4.2 * SPEED_MULT); } // ゲート出遅れ中は加速できない（1人用と同一。キャップは倍率連動で相対ペナルティ不変）
-  const rate = target > n.speed ? 0.85 : 2.1;
+  const rate = target > n.speed ? 0.85 * (n.accelMul || 1) : 2.1; // 加速力の個体差（仕様§7）。減速は全馬共通
   n.speed += (target - n.speed) * (1 - Math.exp(-rate * dt));
-  n.dist += n.speed * dt * npcCornerFactor(room, n.dist, n.lat);
+  n.dist += n.speed * dt * npcCornerFactorFor(room, n);
   if (n.dist >= L && !n.finished) {
     n.finished = true;
     // ゴール時刻はティック内を補間して精密化（写真判定の0.17秒窓に効く）
@@ -763,6 +815,7 @@ function buildField(room) {
   }
 }
 function makeNpc(room, h, lane, jockey, dayForm, startLat, styleKey) {
+  const temper = npcTrait(h.num, 53); // 気性 0..1（穏やか→荒い）
   return {
     nickname: 'NPC・' + h.name, horseId: h.id, horseName: h.name, npc: true, jockey,
     dist: 0, lane, speed: 0, finished: false, finishAt: null, finishClock: null,
@@ -771,7 +824,13 @@ function makeNpc(room, h, lane, jockey, dayForm, startLat, styleKey) {
     num: h.num, rating: h.rating, styleKey,
     base: h.base * SPEED_MULT, heavy: h.heavy, apt: h.apt,
     dayForm,
-    gateT: rollGateT(),
+    // ---- 個体特性（仕様§7: カタログに無い能力値を num から決定的に導出） ----
+    temper,
+    accelMul: 0.88 + npcTrait(h.num, 11) * 0.24,  // 加速力: 加速の exp レート ×0.88〜1.12
+    endureMul: 0.92 + npcTrait(h.num, 23) * 0.16, // 持久力: スタミナ消費 ×0.92〜1.08
+    cornerMul: 0.90 + npcTrait(h.num, 37) * 0.20, // コーナリング: コーナー係数の効き ×0.90〜1.10
+    burstMul: 0.97 + npcTrait(h.num, 41) * 0.06,  // 瞬発力: 末脚倍率 ×0.97〜1.03
+    gateT: rollGateT(temper),
     lat: startLat, targetLat: startLat, latVel: 0,
     stamina: 100, pace: 'nari',
     aiTimer: 0.5 + ((h.num * 53) % 50) / 100, aiLatTimer: 0.4 + ((h.num * 29) % 30) / 100,
@@ -1170,7 +1229,7 @@ wss.on('connection', ws => {
 });
 
 /* ---------------- 起動（保存先の初期化 → 読み込み → listen） ---------------- */
-(async () => {
+if (require.main === module) (async () => {
   try {
     store = createStore(process.env, { dataFile: DATA_FILE });
     const loaded = await store.init();   // PostgreSQL時はテーブル自動作成＋全件読み込み
@@ -1194,3 +1253,6 @@ wss.on('connection', ws => {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 })();
+
+/* テスト/計測用エクスポート（require された時だけ有効。通常起動では使わない） */
+module.exports = { buildField, tickNpcs, makeNpc, npcMakePlan, CAT, SPEED_MULT, TRACK_LEN };
