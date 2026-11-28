@@ -474,7 +474,7 @@ const NPC_STYLE_PROFILE = {
   oikomi: { early: 0.988, mid: 1.000, kick: 1.060, kickFrom: 430 },
 };
 /* 距離適性（1人用 aptMulOf と同一: 距離カテゴリの適性値で ±0.25%） */
-const distCatIdxOf = len => len <= 1000 ? 0 : len <= 1500 ? 1 : 2;
+const distCatIdxOf = len => len <= 1200 ? 0 : len <= 1600 ? 1 : len <= 2000 ? 2 : 3;
 const npcAptMul = (apt, len) => 1 + ((((apt || [1, 1, 1])[distCatIdxOf(len)]) ?? 1) - 1) * 0.0025;
 /* コーナー係数: 1人用 cornerFactor そのもの（直線＋半径110mの半円コーナー。
    コーナー区間だけ 110/(110+lat)、直線は1）。旧マルチ版は見た目の楕円コースの
@@ -1150,10 +1150,10 @@ wss.on('connection', ws => {
       }
       case 'skip': {
         // 観戦スキップ（1人用 skipToFinal と同じ意味: 実シミュレーションを早回しする。
-        // 1500m/2000mのみ「残り1000m」まで。1000mレースには無い）
+        // 1600m以上のみ「残り1000m」まで。最短の1200mレースには無い）
         if (!room || room.mode !== 'watch' || room.state !== 'racing') break;
         const L = room.raceDist || 2000;
-        if (L <= 1000) break;
+        if (L <= 1200) break;
         const target = L - 1000;
         let guard = 0;
         while (guard++ < 30000) {
