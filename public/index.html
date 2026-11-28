@@ -90,11 +90,21 @@
   #raceWrap #progFill { background:linear-gradient(90deg,#ffb03a,#ff7a1a); width:0%; }
   #raceWrap #spdFill { background:linear-gradient(90deg,#39b6ff,#7ee0ff); width:0%; }
   #raceWrap .meter-val { width:64px; font-variant-numeric:tabular-nums; text-shadow:0 1px 2px rgba(0,0,0,.6); }
-  #raceWrap .tagrow { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  /* タグ行は高さを固定する（フェーズ21）: 状況タグの文字数で折り返し行数が
+     変わると、この下の残り距離表示・レースバーが上下にガクガク動くため、
+     想定最大行数ぶんの高さを常時予約する。行数は幅帯ごとに実測で決定:
+     広い画面=1行 / 中間帯=2行 / スマホ=3行 */
+  #raceWrap .tagrow { display:flex; gap:6px; flex-wrap:wrap; align-items:center; align-content:flex-start; height:26px; }
   #raceWrap #secTag, #raceWrap #laneTag { display:inline-block; background:rgba(20,40,20,.85); border:1px solid rgba(255,255,255,.4); color:#ffe9a8; border-radius:999px; padding:2px 10px; font-size:11.5px; font-weight:900; }
   #raceWrap #slipTag { display:none; background:#1d5f8a; border:1px solid #7ee0ff; color:#dff4ff; border-radius:999px; padding:2px 10px; font-size:11.5px; font-weight:900; }
   #raceWrap #slipTag.on { display:inline-block; }
-  #raceWrap #msgPlate { align-self:flex-start; font-weight:900; font-size:15px; color:var(--accent); min-height:38px; display:flex; align-items:center; max-width:34vw; text-align:right; }
+  /* 状況テキスト（msgPlate）は内容で幅が変わるとメーター列を押し狭め、タグ行の
+     折り返し行数が変わってHUD全体が上下に揺れる（フェーズ21で実測26.3px）。
+     幅・高さを固定し、テキストはこの箱の中でだけ折り返す */
+  #raceWrap #msgPlate { align-self:flex-start; font-weight:900; font-size:15px; color:var(--accent); flex:none; width:176px; height:52px; display:flex; align-items:center; justify-content:flex-end; text-align:right; overflow:hidden; }
+  /* 観戦時の長い馬名で順位プレートが広がりメーター列を圧迫しないよう幅を固定し、ラベルは省略表示にする */
+  #raceWrap #rankPlate { max-width:120px; }
+  #raceWrap #rankLabel { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #raceWrap #distBig { margin-top:8px; background:rgba(8,14,22,.78); border:1px solid rgba(255,255,255,.30); border-radius:12px; padding:7px 14px 20px; text-align:center; }
   #raceWrap .db-main { display:flex; align-items:baseline; justify-content:center; gap:8px; }
   #raceWrap .db-label { font-size:15px; font-weight:900; opacity:.85; }
@@ -188,13 +198,23 @@
     .kv { display:flex; justify-content:space-between; padding:7px 2px; border-bottom:1px solid #eee2c4; font-size:14px; }
     .kv b { font-weight:900; }
     #fadeBlack { position:fixed; inset:0; background:#000; opacity:0; pointer-events:none; transition:opacity .45s; z-index:60; }
+  /* 中間幅（タブレット縦・小さな窓）: デスクトップ寸法のままだとメーター列が
+     狭くタグ行が最大3行まで増えて揺れるため、両プレートを細くしタグ行は
+     2行分を予約する（フェーズ21） */
+  @media (max-width:900px){
+    #raceWrap #msgPlate { width:120px; }
+    #raceWrap #rankPlate { max-width:92px; }
+    #raceWrap .tagrow { height:58px; }
+  }
   /* スマホ幅: 1人用 game.css の @media (max-width:560px) の寸法に合わせてHUDを圧縮する
      （フェーズ20: 実機で「画面の半分以上が隠れる」指摘への対応。数値は1人用と同値、
       タグピルだけ折り返しを減らすため僅かに小さくする。タップ領域は54px以上を維持） */
   @media (max-width:560px){
     #raceWrap #rankNum { font-size:27px; }
     #raceWrap #rankPlate { min-width:70px; padding:5px 6px; }
-    #raceWrap #msgPlate { font-size:12px; max-width:26vw; }
+    #raceWrap #msgPlate { font-size:12px; width:104px; height:52px; }
+    #raceWrap #rankPlate { max-width:92px; }
+    #raceWrap .tagrow { height:73px; }
     #raceWrap .meter-line .tag { width:52px; font-size:11px; }
     #raceWrap .meter-val { width:52px; font-size:11px; }
     #raceWrap .meters { gap:5px; padding:5px 8px; }
@@ -2141,11 +2161,12 @@ let gateDoorOpen = 0, gateDoorTarget = 0; // 前扉の開き具合 0=閉 → 1=�
 let watchFocusNick = null; // 観戦HUDの対象（買い目の馬 or 先頭）
 const WHIP_MAX = 3;
 const STYLE_KEY = { '逃げ': 'nige', '先行': 'senko', '差し': 'sashi', '追込': 'oikomi' };
-/* 実速度の底上げ倍率（フェーズ18）: サーバー server.js の SPEED_MULT と同値。
+/* 実速度の倍率: サーバー server.js の SPEED_MULT と同値。
+   フェーズ18で ×1.2 に底上げしたが、フェーズ21でユーザー指示により
+   実馬並み（巡航 約17m/s、平均62km/h）へ戻し 1.0 とした。
    基準速度・速度キャップ・スタミナ消費（距離あたり不変）・ペース熱の基準・
-   横移動速度を一律 ×1.2 し、相対バランスを保ったまま巡航 約17→20.4m/s
-   （61→73km/h）に引き上げる */
-const SPEED_MULT = 1.2;
+   横移動速度はすべてこの定数に連動する */
+const SPEED_MULT = 1.0;
 /* 1人用のペース表・脚質プロファイル・ムチ効果をそのまま移植 */
 const PACE = {
   hold:  { mul: 0.85,  stam: 2.0 },
