@@ -282,9 +282,10 @@
   <div class="card">
     <div style="font-size:13px;opacity:.85;margin-bottom:6px">距離を選ぶ</div>
     <div class="distChips">
-      <button data-dist="1000">1000m<small>1着 700G</small></button>
-      <button data-dist="1500">1500m<small>1着 1,000G</small></button>
+      <button data-dist="1200">1200m<small>1着 800G</small></button>
+      <button data-dist="1600">1600m<small>1着 1,100G</small></button>
       <button data-dist="2000" class="sel">2000m<small>1着 1,500G</small></button>
+      <button data-dist="2400">2400m<small>1着 2,000G</small></button>
     </div>
   </div>
   <div class="modeBtns">
@@ -503,7 +504,7 @@ let roomState = null;
 
 // レース状態
 const TRACK_LEN = 2000; // 物理コース1周（ゴール固定）
-let RACE_DIST = 2000;   // 今回のレース距離（1000/1500/2000）。スタート位置が前にずれる
+let RACE_DIST = 2000;   // 今回のレース距離（1200/1600/2000/2400）。2400は1周＋400m（スタートがゴール奥側）
 const physOff = () => TRACK_LEN - RACE_DIST; // レース座標→物理コース座標のオフセット
 let racing = false, raceStartAt = 0, lastFrame = 0, posTimer = null;
 let runners = new Map(); // nickname -> {dist, lane, speed, npc, horseId, smoothDist, smoothLane, animSpeed, phase}
@@ -699,9 +700,10 @@ function refreshWallet() {
 }
 /* 次走カード（1人用 renderHome のレース名/G1/賞金を距離に連動） */
 const RACE_INFO_CLIENT = {
-  1000: { name: '疾風スプリント', category: '短距離', prize: 700 },
-  1500: { name: 'マイルグランプリ', category: 'マイル', prize: 1000 },
+  1200: { name: '疾風スプリント', category: '短距離', prize: 800 },
+  1600: { name: 'マイルグランプリ', category: 'マイル', prize: 1100 },
   2000: { name: '中距離チャンピオンシップ', category: '中距離', prize: 1500 },
+  2400: { name: '長距離ステイヤーズ', category: '長距離', prize: 2000 },
 };
 function renderRaceCard() {
   const info = RACE_INFO_CLIENT[selDistance] || RACE_INFO_CLIENT[2000];
@@ -759,13 +761,13 @@ const FILTER_AXES = [
 ];
 const FILTER_VALS = {
   style: [['nige', '逃げ'], ['senko', '先行'], ['sashi', '差し'], ['oikomi', '追込']],
-  apt: [['0', '短距離'], ['1', 'マイル'], ['2', '中距離']],
+  apt: [['0', '短距離'], ['1', 'マイル'], ['2', '中距離'], ['3', '長距離']],
   lock: [['unlocked', '解放済み'], ['locked', '未解放']],
   era: [['pre90', '1990年代以前'], ['y00', '2000年代'], ['y10', '2010年代'], ['y20', '2020年代']],
 };
 const ERA_LABEL = { pre90: '1990年代以前', y00: '2000年代', y10: '2010年代', y20: '2020年代' };
-const CAT_LABEL = ['短距離', 'マイル', '中距離'];
-const aptLabelOf = h => { const a = h.apt || [1, 1, 1]; let bi = 0; for (let i = 1; i < 3; i++) if (a[i] > a[bi]) bi = i; return CAT_LABEL[bi]; };
+const CAT_LABEL = ['短距離', 'マイル', '中距離', '長距離'];
+const aptLabelOf = h => { const a = h.apt || [1, 1, 1, 1]; let bi = 0; for (let i = 1; i < a.length; i++) if (a[i] > a[bi]) bi = i; return CAT_LABEL[bi]; };
 const STYLE_TEXT = {
   '逃げ': 'スタートから先頭に立ち、逃げ切りを狙う',
   '先行': '好位置につけて、直線で抜け出す',
@@ -2352,7 +2354,7 @@ const STYLE_PROFILE = {
   sashi:  { early: 0.990, mid: 1.000, kick: 1.032, kickFrom: 480 },
   oikomi: { early: 0.977, mid: 0.994, kick: 1.050, kickFrom: 400 },
 };
-const distCatIdx = () => RACE_DIST <= 1000 ? 0 : RACE_DIST <= 1500 ? 1 : 2;
+const distCatIdx = () => RACE_DIST <= 1200 ? 0 : RACE_DIST <= 1600 ? 1 : RACE_DIST <= 2000 ? 2 : 3;
 function myAptMul() {
   if (!myHorseDef) return 1;
   const v = (myHorseDef.apt || [1, 1, 1])[distCatIdx()] ?? 1;
@@ -3200,7 +3202,7 @@ function raceLoop(now) {
     // 観戦: 全頭リモート補間のみ。スキップボタンの表示条件は1人用と同じ
     const lead = leaderNick();
     const lr = lead ? runners.get(lead) : null;
-    $('skipBtn').style.display = (RACE_DIST > 1000 && lr && lr.dist < RACE_DIST - 1000) ? '' : 'none';
+    $('skipBtn').style.display = (RACE_DIST > 1200 && lr && lr.dist < RACE_DIST - 1000) ? '' : 'none';
     if (betState && betState.picks.length) {
       const pickNick = [...runners.entries()].find(([, r]) => betState.picks.includes(r.horseName));
       if (pickNick) flashCheck(pickNick[0], pickNick[1].horseName);
@@ -3497,6 +3499,25 @@ if (new URLSearchParams(location.search).has('orbit') || new URLSearchParams(loc
         (Array.isArray(o.material) ? o.material : [o.material]).forEach(mt => mats.add(mt.name + ':' + (mt.visible ? 1 : 0)));
       });
       return { meshCount, mats: [...mats], fpOn: !!m.userData.vis._fpOn, armMeshCount, armTris, armVisible, bodyWritable };
+    },
+    // 検証用（フェーズ25）: ガイドの状態と「攻め大予測」の直接評価
+    guideProbe: () => ({
+      guideOn, racing, watchMode, replayMode, RACE_DIST,
+      myDist: +myDist.toFixed(1), remain: +(RACE_DIST - myDist).toFixed(1),
+      stamina: +stamina.toFixed(1), paceKey, myRank, myStyleKey,
+      guideText: $('guide').textContent, guideShown: $('guide').classList.contains('on'),
+      guideAgeMs: { last: Math.round(performance.now() - guideLastAt), pred: Math.round(performance.now() - guidePredictAt) }, slipActive,
+      predictPushL: (() => { try { const p = predictPaceRunout('pushL'); return p.empty ? { empty: true, remainAtEmpty: +p.remainAtEmpty.toFixed(1) } : { empty: false, staminaLeft: +p.staminaLeft.toFixed(1) }; } catch (e) { return { error: String(e) }; } })(),
+    }),
+    // 検証用（フェーズ25）: 仕掛けゾーン相当の状態（脚質の kickFrom+40m 地点・
+    // 予測が割り込まないよう予測クールダウンを立てた状態）を置いて
+    // updateGuide を1回通し、表示文を返す
+    guideAttackTry: (stam, rank) => {
+      const prof = STYLE_PROFILE[myStyleKey] || STYLE_PROFILE.senko;
+      myDist = RACE_DIST - (prof.kickFrom + 40); stamina = stam; myRank = rank; setPace('nari', true);
+      guideOnce.delete('spurt'); guideLastAt = 0; guidePredictAt = performance.now();
+      updateGuide();
+      return $('guide').textContent;
     },
     // 検証用: 名前タグの付与状況（人間の馬だけに付いているか・表示状態）
     nameTags: () => {
@@ -3849,7 +3870,7 @@ function updateHUD() {
    なので HUD レイアウトは動かない。観戦・リプレイでは出さない。 */
 let guideOn = localStorage.getItem('km_guide') !== '0';
 let guideLastAt = 0, guideHideTimer = 0, guideFoulPending = false;
-let guideSlipSince = 0, guidePaceWarnAt = 0, guideStamLowAt = 0;
+let guideSlipSince = 0, guidePaceWarnAt = 0, guideStamLowAt = 0, guidePredictAt = 0;
 const guideOnce = new Set();
 const GUIDE_STYLE_TIPS = {
   nige: '作戦【逃げ】スタートから先頭を狙おう。飛ばしすぎると最後に失速するので中盤は馬なりで',
@@ -3863,6 +3884,41 @@ const GUIDE_SPURT_TIPS = {
   sashi: '仕掛けどころ！外に持ち出して一気に差そう',
   oikomi: '末脚の出番！大外から一気に追い込もう',
 };
+/* 予測（フェーズ25）: 「今このまま攻め大（pace）を続けたらどうなるか」を、
+   stepPhysics の target/drain 式そのままで dt=0.2s の簡易シミュレーションで
+   先読みする。前詰まり・ムチ・ゲート出遅れは無視し、スリップ状態は現在値を
+   固定する近似（実測ハーネスで実ランと照合済みの誤差範囲で使う）。
+   戻り値: { empty:true, remainAtEmpty } スタミナが尽きる「ゴールまで残り m」
+          { empty:false, staminaLeft } ゴールまで持つ場合の残スタミナ */
+function predictPaceRunout(pace) {
+  const prof = myHorseDef || { rating: 90 };
+  const going = GOING_CLIENT[raceGoing.id] || GOING_CLIENT.ryo;
+  const heavyMe = (prof && prof.heavy) || 1;
+  const heavySpdMe = raceGoing.id === 'ryo' ? 1 : (1 + (heavyMe - 1) * (raceGoing.id === 'ju' ? 1 : 0.55));
+  const base = (prof.base || (14.226 + 0.0289 * (prof.rating || 90))) * SPEED_MULT;
+  let d = myDist, sp = mySpeed, st = stamina, t = 0;
+  const dt = 0.2;
+  while (d < RACE_DIST && t < 400) {
+    let target = base * (1 + ((prof.rating || 90) - 90) * 0.0011) * myDayForm * myAptMul()
+      * PACE[pace].mul * raceShapeMod(d, myStyleKey);
+    const tired = st < 35 ? 0.80 + 0.20 * (st / 35) : 1;
+    target *= tired * going.speed * heavySpdMe;
+    target = Math.min(target, 24.0 * SPEED_MULT);
+    const rate = target > sp ? 0.85 : 2.1;
+    sp += (target - sp) * (1 - Math.exp(-rate * dt));
+    d += sp * dt * cornerFactorAt(d, -myLat);
+    let drain = PACE[pace].stam * SPEED_MULT;
+    if (drain < 0 && slipActive) drain *= (myStyleKey === 'senko' ? 0.32 : 0.45);
+    if (drain < 0) {
+      drain *= going.drain;
+      if (raceGoing.id !== 'ryo') drain *= (1 + (1 - heavyMe) * (raceGoing.id === 'ju' ? 1.1 : 0.55));
+    }
+    st += drain * dt;
+    if (st <= 0) return { empty: true, remainAtEmpty: Math.max(0, RACE_DIST - d) };
+    t += dt;
+  }
+  return { empty: false, staminaLeft: Math.max(0, st) };
+}
 function guideDisplay(text, dur = 5600) {
   if (!guideOn) return;
   const el = $('guide');
@@ -3874,7 +3930,7 @@ function guideDisplay(text, dur = 5600) {
 }
 function guideReset() {
   guideOnce.clear();
-  guideFoulPending = false; guideSlipSince = 0; guidePaceWarnAt = 0; guideStamLowAt = 0; guideLastAt = 0;
+  guideFoulPending = false; guideSlipSince = 0; guidePaceWarnAt = 0; guideStamLowAt = 0; guidePredictAt = 0; guideLastAt = 0;
   clearTimeout(guideHideTimer);
   const el = $('guide'); if (el) el.classList.remove('on');
 }
@@ -3893,6 +3949,18 @@ function updateGuide() {
     guideStamLowAt = now;
     return guideDisplay('スタミナ残りわずか！攻め続けると失速する。『馬なり』『おさえる』で温存しよう');
   }
+  // 予測ガイド（フェーズ25）: 今攻め大にしたら/このまま攻め続けたら、
+  // ゴールまであと何 m でスタミナが尽きるかを先読みして警告する（30秒間隔）
+  if (remain > 250 && stamina >= 18 && now - guidePredictAt > 30000) {
+    const pred = predictPaceRunout('pushL');
+    if (pred.empty && pred.remainAtEmpty > 120) {
+      guidePredictAt = now;
+      const m = Math.round(pred.remainAtEmpty / 10) * 10;
+      return guideDisplay(paceKey === 'pushL'
+        ? `予測：このまま攻め続けると、ゴールまであと約${m}mでスタミナ切れ！`
+        : `予測：今攻め大にすると、ゴールまであと約${m}mでスタミナ切れ。今は温存が無難`, 6500);
+    }
+  }
   if (!guideOnce.has('slip') && guideSlipSince && now - guideSlipSince > 1200) {
     guideOnce.add('slip');
     return guideDisplay('スリップストリーム中！前の馬の真後ろはスタミナ消費が大きく減る');
@@ -3904,6 +3972,10 @@ function updateGuide() {
   const prof = STYLE_PROFILE[myStyleKey] || STYLE_PROFILE.senko;
   if (!guideOnce.has('spurt') && remain <= prof.kickFrom + 80 && remain > 120) {
     guideOnce.add('spurt');
+    // 仕掛け合図（フェーズ25）: 予測で「攻め大でもゴールまで持つ」なら強い合図を出す
+    if (paceKey !== 'pushL' && myRank > 1 && !predictPaceRunout('pushL').empty) {
+      return guideDisplay('今攻めろ！予測ではスタミナはゴールまで持つ。攻め大で仕掛けよう！', 7000);
+    }
     return guideDisplay(GUIDE_SPURT_TIPS[myStyleKey] || GUIDE_SPURT_TIPS.senko);
   }
   if (!guideOnce.has('whip') && remain <= 320 && remain > 60 && whipsUsed < WHIP_MAX && myRank > 1) {
