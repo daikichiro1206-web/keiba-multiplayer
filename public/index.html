@@ -511,7 +511,7 @@ document.addEventListener('contextmenu', e => {
    「画面フェーズ25×サーバーフェーズ24」の混在状態が公開され、1200mが2000mに
    化ける・新機能が無い、という事故になった。起動時に /health の version と
    照合し、不一致なら警告バナーを出して無言の劣化を防ぐ。 */
-const CLIENT_BUILD = 'phase32';
+const CLIENT_BUILD = 'phase34';
 function checkServerVersion(serverVersion) {
   if (!serverVersion || serverVersion === CLIENT_BUILD) return;
   const el = $('verWarn');
@@ -894,7 +894,15 @@ function connectWs() {
     const m = JSON.parse(ev.data);
     if (m.type === 'welcome') { profile = m.profile; horses = m.horses; refreshWallet(); checkServerVersion(m.version); }
     else if (m.type === 'error') { $('homeErr').textContent = m.message; $('lobbyErr').textContent = m.message; }
-    else if (m.type === 'room') { roomState = m.room; if (!soloMode) renderLobby(m.room); }
+    else if (m.type === 'room') {
+      roomState = m.room;
+      /* 結果画面・リプレイを見ている間は画面を切り替えない（フェーズ34）:
+         他の人が先にロビーへ戻っても自分の結果/リプレイ表示は維持する。
+         roomState だけ最新化しておき、自分が「ロビーに戻る」を押した時点で
+         リセット済みのロビーを描く。 */
+      const viewingResult = !$('screenResult').classList.contains('hidden') || replayMode;
+      if (!soloMode && !viewingResult) renderLobby(m.room);
+    }
     else if (m.type === 'countdown') { startCountdown(m); }
     else if (m.type === 'raceStart') { beginRace(m.field, m.meta); }
     else if (m.type === 'state') { applyState(m.runners); }
@@ -4872,7 +4880,15 @@ $('btnAgain').onclick = () => {
   $('screenResult').classList.add('hidden');
   if (watchMode) { watchMode = false; showHome(); return; }
   if (soloMode) showHome();
-  else if (roomState) { showHome(); renderLobby(roomState); }
+  else if (roomState) {
+    /* サーバーへロビー復帰を伝える（フェーズ34）: これを受けてサーバーが
+       部屋を lobby に戻し、全員の準備を未完了にリセットして room を配信し直す。
+       以前はこの送信が無く、サーバーが finished のまま固まって再戦できなかった。
+       下の renderLobby(roomState) は配信が届くまでの暫定表示で、直後に
+       リセット済みの配信で描き直される。 */
+    send({ type: 'backToLobby' });
+    showHome(); renderLobby(roomState);
+  }
   else showHome();
 };
 /* トークンがあれば自動ログイン */
