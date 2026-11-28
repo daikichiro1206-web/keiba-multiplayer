@@ -14,6 +14,22 @@ const { WebSocketServer } = require('ws');
 const { createStore } = require('./store');
 const CAT = require('./catalog');
 
+/* ビルド識別子（フェーズ32）: クライアント(index.html の CLIENT_BUILD)と一致させる。
+   2026-11-28 の事故: GitHubへのファイル別アップロードの途中のコミットで Render の
+   デプロイが止まり、「画面はフェーズ25・サーバー/カタログはフェーズ24」という
+   混在状態のまま公開され、1200m指定が旧カタログの距離リストに無く黙って2000mに
+   化けた。/health と認証応答でこの値を返し、クライアントが不一致を検出して
+   画面に警告を出すことで、混在デプロイを即座に可視化する。 */
+const BUILD_VERSION = 'phase32';
+/* 距離の受理: 数値化してから判定する（文字列 "1200" 等の型違いを黙って
+   2000m に化けさせない）。不正値のフォールバック時はログに残す。 */
+function validDistance(v) {
+  const n = Number(v);
+  if (CAT.DISTANCES.includes(n)) return n;
+  if (v !== undefined && v !== null && v !== '') console.warn(`[distance] 不正な距離指定 ${JSON.stringify(v)} を 2000m にフォールバック`);
+  return 2000;
+}
+
 const PORT = process.env.PORT || 3000;
 const TRACK_LEN = 2000;          // 物理コース1周（ゴール固定。レース距離はこれ以下で、スタートが前にずれる）
 const FIELD_SIZE = CAT.FIELD_SIZE; // 18頭立て（名簿50頭から抽選）
@@ -182,7 +198,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, rooms: rooms.size, players: Object.keys(players).length }));
+    res.end(JSON.stringify({ ok: true, rooms: rooms.size, players: Object.keys(players).length, version: BUILD_VERSION }));
     return;
   }
   if (req.method === 'POST' && req.url === '/api/unlock') {
@@ -253,14 +269,14 @@ const server = http.createServer((req, res) => {
   };
   // 次のレース情報: グレードを抽選して本人に保持し、レース名と一緒に返す（1人用 rollGrade 25%）
   if (apiPost('/api/raceinfo', ({ nickname, p, args, json }) => {
-    const distance = CAT.DISTANCES.includes(args.distance) ? args.distance : 2000;
+    const distance = validDistance(args.distance);
     p.pendingGrade = CAT.rollGrade();
     persistPlayer(nickname);
     json(200, { grade: p.pendingGrade, raceName: CAT.RACE_INFO[distance].name, category: CAT.RACE_INFO[distance].category, distance });
   })) return;
   // 観戦レースの出走抽選: 名簿50頭から18頭＋当日の調子（新聞の印と連動する form）をサーバーが決める
   if (apiPost('/api/watch/field', ({ nickname, p, args, json }) => {
-    const distance = CAT.DISTANCES.includes(args.distance) ? args.distance : 2000;
+    const distance = validDistance(args.distance);
     const names = HORSES.map(h => h.name);
     for (let i = names.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [names[i], names[j]] = [names[j], names[i]]; }
     const field = names.slice(0, FIELD_SIZE);
@@ -355,7 +371,10 @@ const server = http.createServer((req, res) => {
   }
   // ?v= 付きアセットは内容が変わらない前提で長期キャッシュ、それ以外（HTML含む）は
   // 毎回検証させ、モデルやコードの差し替えが実機に届かない事故を防ぐ
-  const cacheCtl = req.url.includes('?v=') ? 'public, max-age=31536000, immutable' : 'no-cache';
+  // HTMLは no-store で保存自体を禁止（iOS Safari が no-cache でも古い画面を
+  // 使い回す事故の再発防止。フェーズ32）。?v= アセットは従来どおり長期キャッシュ。
+  const isHtml = path.extname(file) === '.html';
+  const cacheCtl = isHtml ? 'no-cache, no-store, must-revalidate' : (req.url.includes('?v=') ? 'public, max-age=31536000, immutable' : 'no-cache');
   res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': cacheCtl });
   fs.createReadStream(file).pipe(res);
 });
@@ -1097,7 +1116,7 @@ wss.on('connection', ws => {
     if (msg.type === 'hello') {
       nickname = sessions.get(msg.token);
       if (!nickname) { send(ws, { type: 'error', message: 'ログインが必要です' }); return; }
-      send(ws, { type: 'welcome', profile: publicProfile(nickname), horses: HORSES });
+      send(ws, { type: 'welcome', profile: publicProfile(nickname), horses: HORSES, version: BUILD_VERSION });
       // 再接続: roomCodeがあれば元の部屋に戻す
       if (msg.roomCode && rooms.has(msg.roomCode)) {
         room = rooms.get(msg.roomCode);
@@ -1118,7 +1137,7 @@ wss.on('connection', ws => {
         room = createRoom(nickname);
         room.solo = true;
         room.mode = 'jockey';
-        room.raceDist = CAT.DISTANCES.includes(msg.distance) ? msg.distance : 2000;
+        room.raceDist = validDistance(msg.distance);
         room.grade = consumeGrade(nickname);
         member = addMember(room, nickname, ws);
         if (msg.horseId && players[nickname].unlocked.includes(msg.horseId)) member.horseId = msg.horseId;
@@ -1140,7 +1159,7 @@ wss.on('connection', ws => {
         room.owner = nickname;
         room.watchSession = sess;
         room.betId = bet.id;
-        room.raceDist = sess.distance || 2000;
+        room.raceDist = validDistance(sess.distance);
         room.grade = sess.grade || 'normal';
         member = addMember(room, nickname, ws);
         member.ready = true;
@@ -1182,7 +1201,7 @@ wss.on('connection', ws => {
         if (room) leaveRoom(room, nickname);
         room = createRoom(nickname);
         room.mode = 'jockey';
-        room.raceDist = CAT.DISTANCES.includes(msg.distance) ? msg.distance : 2000;
+        room.raceDist = validDistance(msg.distance);
         room.grade = consumeGrade(nickname);
         member = addMember(room, nickname, ws);
         send(ws, { type: 'room', room: roomSummary(room) });
