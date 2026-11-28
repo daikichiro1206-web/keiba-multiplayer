@@ -132,6 +132,10 @@
   @keyframes cdPop { 0% { transform:scale(1.7); opacity:0; } 40% { opacity:1; } 100% { transform:scale(1); opacity:1; } }
   #raceWrap #commentary { position:absolute; left:50%; transform:translateX(-50%); bottom:150px; z-index:5; max-width:92vw; background:rgba(10,16,26,.82); border:1px solid rgba(126,224,255,.45); color:#dff4ff; border-radius:999px; padding:5px 16px; font-size:13px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; display:none; }
   #raceWrap #commentary.on { display:block; }
+  /* ガイド（フェーズ23）: 実況ピルの上に重ならないよう少し上へ。絶対配置なので
+     出し入れでレイアウトは動かない（フェーズ21のガクガク対策と同方針） */
+  #raceWrap #guide { position:absolute; left:50%; transform:translateX(-50%); bottom:192px; z-index:5; max-width:92vw; background:rgba(26,34,10,.87); border:1px solid rgba(190,242,100,.6); color:#eef7d8; border-radius:999px; padding:5px 16px; font-size:13px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; display:none; }
+  #raceWrap #guide.on { display:block; }
   #raceWrap #goalFlash { position:absolute; left:50%; top:38%; transform:translate(-50%,-50%) scale(.82); z-index:9; text-align:center; pointer-events:none; opacity:0; transition:opacity .18s ease,transform .18s ease; text-shadow:0 4px 0 rgba(0,0,0,.45),0 0 44px rgba(255,194,28,.55); }
   #raceWrap #goalFlash.on { opacity:1; transform:translate(-50%,-50%) scale(1); }
   #raceWrap #goalFlashMain { font-size:clamp(52px,15vw,104px); font-weight:900; line-height:1.05; color:var(--accent); white-space:nowrap; }
@@ -234,6 +238,7 @@
     #raceWrap .ctl small { font-size:8.5px; }
     #raceWrap .steer { width:52px; height:64px; font-size:20px; }
     #raceWrap #commentary { bottom:140px; font-size:11.5px; }
+    #raceWrap #guide { bottom:180px; font-size:11.5px; }
     #raceWrap #lookBar { bottom:88px; }
     #raceWrap .lookbtn { font-size:11.5px; padding:5px 10px; min-height:36px; }
     #raceWrap #distBig { margin-top:6px; padding:5px 10px 16px; }
@@ -359,6 +364,7 @@
   </div>
   <div id="countdown" class="hidden"></div>
   <div id="commentary"></div>
+  <div id="guide"></div>
   <div id="camBar">
     <button data-cam="auto" class="on">📺 放送</button><button data-cam="leader">🏇 先頭集団</button><button data-cam="bet">🎫 買い目の馬</button><button data-cam="sky">🦅 上空</button><button data-cam="free">🎥 自由</button>
   </div>
@@ -465,6 +471,7 @@
     <label>音量</label>
     <input type="range" id="setVolume" min="0" max="100" step="1">
     <label><input type="checkbox" id="setMute" style="width:auto"> ミュート（音を出さない）</label>
+    <label><input type="checkbox" id="setGuide" style="width:auto"> ガイド表示（レース中の勝ち方ヒント）</label>
     <label>アカウント</label>
     <button id="btnLogout" class="sub" style="width:100%">ログアウト</button>
     <p style="font-size:12px;opacity:.75">馬モデル: "Bay Horse" by vinish.dev, CC BY 4.0（改変あり）</p>
@@ -661,10 +668,11 @@ function sfx(name) {
 document.addEventListener('click', e => { if (e.target.closest('button')) sfx('click'); });
 function refreshSoundBtn() { $('btnSound').textContent = sndMute ? '🔇' : '🔊'; }
 $('btnSound').onclick = () => { sndMute = !sndMute; localStorage.setItem('km_mute', sndMute ? '1' : '0'); applyVol(); refreshSoundBtn(); };
-$('btnSettings').onclick = () => { $('setVolume').value = Math.round(sndVol * 100); $('setMute').checked = sndMute; $('settingsModal').classList.remove('hidden'); };
+$('btnSettings').onclick = () => { $('setVolume').value = Math.round(sndVol * 100); $('setMute').checked = sndMute; $('setGuide').checked = guideOn; $('settingsModal').classList.remove('hidden'); };
 $('btnCloseSettings').onclick = () => $('settingsModal').classList.add('hidden');
 $('setVolume').oninput = () => { sndVol = Number($('setVolume').value) / 100; localStorage.setItem('km_vol', $('setVolume').value); applyVol(); };
 $('setMute').onchange = () => { sndMute = $('setMute').checked; localStorage.setItem('km_mute', sndMute ? '1' : '0'); applyVol(); refreshSoundBtn(); };
+$('setGuide').onchange = () => { guideOn = $('setGuide').checked; localStorage.setItem('km_guide', guideOn ? '1' : '0'); if (!guideOn) $('guide').classList.remove('on'); };
 $('btnLogout').onclick = () => { localStorage.removeItem('km_token'); localStorage.removeItem('km_room'); location.reload(); };
 refreshSoundBtn();
 
@@ -1255,6 +1263,29 @@ function applyRiderPose(root) {
     b.quaternion.copy(bind[name]).multiply(dq);
   }
 }
+/* 一人称専用の腕ポーズ追加分（フェーズ23）: 通常ポーズの手は腰の位置にあり、
+   一人称カメラ（騎手の目線）では画角の大きく下になって見えない。そこで
+   一人称の間だけ腕チェーンに追加回転をかけ、手が馬の首元・画角下部に
+   来るようにする。三人称（他人の騎手・リプレイ）には一切影響しない。
+   値は __km.fpArmTry で実測して決定: 手 sy≈1.40→0.87、sx は両手が首元
+   中央に寄る（手綱をまとめて持つ騎手の姿勢）。手綱のグリップは手ボーンの
+   実位置に毎フレーム追従するので、上げた手にも手綱が付いてくる。 */
+const RIDER_FP_ARM = {
+  LeftArm: [-0.8, 0, 0.72], RightArm: [-0.8, 0, -0.72],
+  LeftForeArm: [-1.5, 0, 0], RightForeArm: [-1.5, 0, 0],
+};
+function applyRiderArmDelta(root, extra) {
+  if (!root) return;
+  const bind = riderBindQuats();
+  for (const name of ['LeftArm', 'RightArm', 'LeftForeArm', 'RightForeArm']) {
+    const b = root.getObjectByName(name);
+    if (!b || !bind[name]) continue;
+    const base = RIDER_POSE[name] || [0, 0, 0];
+    const ex = extra && extra[name] ? extra[name] : [0, 0, 0];
+    const dq = new THREE.Quaternion().setFromEuler(new THREE.Euler(base[0] + ex[0], base[1] + ex[1], base[2] + ex[2], 'XYZ'));
+    b.quaternion.copy(bind[name]).multiply(dq);
+  }
+}
 /* レーシングヘルメット＋ゴーグル（1人用 makeJockeyHelmet を移植）。
    騎手モデルの Head ボーンに取り付ける装備品 */
 function makeJockeyHelmet(helmetColor) {
@@ -1359,6 +1390,10 @@ function makeModelHorse(horseId, num) {
         _q1 = new THREE.Vector3(), _q2 = new THREE.Vector3();
   // 手綱のグリップ点（bodyG空間）。騎手配置後に実際の手ボーン位置で上書きされる
   const reinGrip = { neg: new THREE.Vector3(-0.23, 1.66, 0.42), pos: new THREE.Vector3(0.23, 1.66, 0.42) };
+  // 手ボーンへの参照（フェーズ23: グリップを毎フレーム手の実位置へ追従させる。
+  // 騎手の上下動や一人称の腕ポーズ変更に手綱の端が付いてくるようにするため）
+  let handBoneNeg = null, handBonePos = null;
+  const _hg = new THREE.Vector3();
   const _YAX = new THREE.Vector3(0, 1, 0), _ZAX = new THREE.Vector3(0, 0, 1);
   function setSeg(mesh, a, b) {
     _sgd.subVectors(b, a);
@@ -1388,6 +1423,11 @@ function makeModelHorse(horseId, num) {
   const _mc = new THREE.Vector3(), _pc = new THREE.Vector3();
   function updateBridle() {
     if (!headBone) return;
+    // グリップ＝手の実位置（騎手の揺れ・一人称腕ポーズに手綱が追従する）
+    if (handBoneNeg && handBonePos) {
+      handBoneNeg.getWorldPosition(_hg); bodyG.worldToLocal(_hg); reinGrip.neg.copy(_hg);
+      handBonePos.getWorldPosition(_hg); bodyG.worldToLocal(_hg); reinGrip.pos.copy(_hg);
+    }
     headBone.updateWorldMatrix(true, false);
     _mc.copy(HEAD_LOCAL.mouth); headBone.localToWorld(_mc); bodyG.worldToLocal(_mc);
     _pc.copy(HEAD_LOCAL.poll); headBone.localToWorld(_pc); bodyG.worldToLocal(_pc);
@@ -1411,7 +1451,7 @@ function makeModelHorse(horseId, num) {
     if (riderHeadBone) riderHeadBone.add(makeJockeyHelmet(def.helm));
     jock.add(riderObj);
   }
-  root.userData.vis = { bodyG, jock, riderObj, updateBridle };
+  root.userData.vis = { bodyG, jock, riderObj, riderHead: riderObj ? riderObj.getObjectByName('Head') : null, updateBridle };
   root.updateMatrixWorld(true);
   if (riderObj) {
     // ポーズ後の骨格を実測: Hips が鞍の上に来るよう clone 全体をずらし、
@@ -1427,7 +1467,7 @@ function makeModelHorse(horseId, num) {
       ['LeftHand', 'RightHand'].forEach(hn => {
         const hb = riderObj.getObjectByName(hn); if (!hb) return;
         const hv = new THREE.Vector3(); hb.getWorldPosition(hv); bodyG.worldToLocal(hv);
-        if (hv.x < 0) reinGrip.neg.copy(hv); else reinGrip.pos.copy(hv);
+        if (hv.x < 0) { reinGrip.neg.copy(hv); handBoneNeg = hb; } else { reinGrip.pos.copy(hv); handBonePos = hb; }
       });
     }
   }
@@ -2335,6 +2375,9 @@ function setupField(field) {
   updateWhipLabel();
   $('goalFlash').classList.remove('show');
   $('commentary').style.display = 'none';
+  // ガイド（フェーズ23）: レースごとに状態をリセットし、出走前に脚質の作戦を1つ出す
+  guideReset();
+  if (guideOn && !watchMode) guideDisplay(GUIDE_STYLE_TIPS[myStyleKey] || GUIDE_STYLE_TIPS.senko, 6500);
   const sorted = [...field].sort((a, b) => a.lane - b.lane);
   sorted.forEach((f, i) => {
     runners.set(f.nickname, {
@@ -2675,6 +2718,7 @@ function sayComment(text) {
 }
 function registerFoul(o) {
   foulCount++;
+  guideFoulPending = true; // ガイド（フェーズ23）: 初回反則で注意ヒントを出す
   mySpeed *= 0.94;
   updateFoulTag();
   sfx('foul');
@@ -2881,7 +2925,7 @@ function startReplay() {
   $('camBar').style.display = 'none'; $('controls').style.display = 'none'; $('lookBar').style.display = 'none';
   $('skipBtn').style.display = 'none'; $('watchExit').style.display = 'none';
   $('replayBar').style.display = 'flex';
-  horseMeshes.forEach(m => { if (m.userData.vis) m.userData.vis.jock.visible = true; if (m.userData.nameTag) { m.userData.nameTag.visible = true; m.userData.nameTag.material.opacity = 0.95; } m.userData.replayDist = null; setHorseAnim(m, 'Gallop'); });
+  horseMeshes.forEach(m => { if (m.userData.vis) setOwnRiderFP(m.userData.vis, false); if (m.userData.nameTag) { m.userData.nameTag.visible = true; m.userData.nameTag.material.opacity = 0.95; } m.userData.replayDist = null; setHorseAnim(m, 'Gallop'); });
   replayLast = performance.now();
   requestAnimationFrame(replayLoop);
 }
@@ -3103,6 +3147,7 @@ function raceLoop(now) {
   if (watchMode) updateWatchCamera(rawDt); else updateCamera(rawDt);
   updateHUD();
   updateCommentary();
+  updateGuide();
   // ゴール判定（着順フラッシュはサーバー確定時刻ベースの flashCheck が担う）
   if (!myFinished && myDist >= RACE_DIST) {
     myFinished = true;
@@ -3276,6 +3321,31 @@ if (new URLSearchParams(location.search).has('orbit') || new URLSearchParams(loc
       const out = [];
       horseMeshes.forEach(m => { const v = m.userData.vis; if (v) out.push({ z: +v.jock.position.z.toFixed(3), rz: +v.jock.rotation.z.toFixed(3), rx: +v.jock.rotation.x.toFixed(3) }); });
       return out;
+    },
+    // 検証用（フェーズ23）: 一人称で自騎手の腕・手が画面のどこに投影されるか
+    fpProbe: () => {
+      const m = horseMeshes.get(myName);
+      if (!m || !m.userData.vis || !m.userData.vis.riderObj) return null;
+      const ro = m.userData.vis.riderObj;
+      const out = { fov: +camera.fov.toFixed(1), headScale: m.userData.vis.riderHead ? +m.userData.vis.riderHead.scale.x.toFixed(4) : null, jockVisible: m.userData.vis.jock.visible };
+      for (const bn of ['LeftHand', 'RightHand', 'LeftForeArm', 'RightForeArm', 'LeftArm', 'RightArm', 'Head', 'Neck']) {
+        const b = ro.getObjectByName(bn); if (!b) { out[bn] = null; continue; }
+        const w = new THREE.Vector3(); b.getWorldPosition(w);
+        const v = w.clone().project(camera);
+        out[bn] = { sy: +((-v.y * 0.5 + 0.5)).toFixed(3), sx: +((v.x * 0.5 + 0.5)).toFixed(3), behind: v.z > 1 };
+      }
+      return out;
+    },
+    // 検証用（フェーズ23）: 一人称の腕ポーズ追加分を試行し、手の投影位置を返す
+    fpArmTry: (lx, lz, fx) => {
+      const m = horseMeshes.get(myName);
+      if (!m || !m.userData.vis || !m.userData.vis.riderObj) return null;
+      applyRiderArmDelta(m.userData.vis.riderObj, {
+        LeftArm: [lx, 0, lz], RightArm: [lx, 0, -lz],
+        LeftForeArm: [fx, 0, 0], RightForeArm: [fx, 0, 0],
+      });
+      m.updateMatrixWorld(true);
+      return window.__km.fpProbe();
     },
     // 検証用: 名前タグの付与状況（人間の馬だけに付いているか・表示状態）
     nameTags: () => {
@@ -3476,6 +3546,23 @@ function orbitCamera(dist) {
     sunLight.target.position.set(p.x, 0, p.z);
   }
 }
+/* 一人称での自騎手の扱い（フェーズ23）: 従来は騎手ごと非表示だったが、
+   「腕が見えたら楽しい」との要望で、体は表示したまま視界を塞ぐ頭部だけを
+   消す方式に変えた。Head ボーンを極小スケールにすると頭＋ヘルメット
+   （Head の子）が潰れて見えなくなり、腕・袖・胴体は残る。腕は jock グループ
+   の歩様同期モーション（前傾・鐙の上下・コーナー内傾・ムチ時の前傾増し）
+   をそのまま受けるので、手綱を握る腕が揺れと一緒に画面下部で動く。
+   一人称でない場面（リプレイ）では必ず元に戻す。 */
+function setOwnRiderFP(vis, fp) {
+  if (!vis) return;
+  vis.jock.visible = true;
+  if (vis.riderHead) vis.riderHead.scale.setScalar(fp ? 0.001 : 1);
+  // 腕ポーズの一人称差分は状態が変わった時だけ適用する（毎フレームの再計算を避ける）
+  if (vis.riderObj && vis._fpArm !== fp) {
+    vis._fpArm = fp;
+    applyRiderArmDelta(vis.riderObj, fp ? RIDER_FP_ARM : null);
+  }
+}
 function updateCamera(dt) {
   if (DEBUG_ORBIT) { orbitCamera(myDist); return; }
   const p = trackPoint(myDist, latToLane(myLat));
@@ -3491,7 +3578,9 @@ function updateCamera(dt) {
   const sf = clamp(mySpeed / 17, 0, 1.15); // 1人用 updateCamera と文字どおり同一の sf 定義（フェーズ19: ×1.2正規化をやめ1人用の式に統一）
   const bobA = Math.sin(myPhase - 0.55) * 0.05 * sf;
   const bobB = Math.pow(Math.max(0, Math.sin(myPhase - 0.55)), 2) * 0.05 * sf;
-  // 一人称: 馬の頭の少し後ろ・騎手の目線（1人用と同値）。自分の騎手は非表示、手綱は表示
+  // 一人称: 馬の頭の少し後ろ・騎手の目線（1人用と同値）。自分の騎手は頭だけ
+  // 消して体を表示し、一人称専用に腕ポーズを上げて手綱を握る腕が見えるように
+  // する（フェーズ23。カメラ位置は1人用のまま変えない）
   const camX = p.x - fwdX * 0.22, camZ = p.z - fwdZ * 0.22;
   camera.position.set(camX, 2.52 + bobA + bobB, camZ);
   const lookTarget = lookHeld ? (lookHeld === 'L' ? -1.05 : lookHeld === 'R' ? 1.05 : (lookYaw >= 0 ? 2.95 : -2.95)) : dragYaw;
@@ -3513,9 +3602,9 @@ function updateCamera(dt) {
     - (isCornerAt(myDist) ? 0.014 * sf : 0);
   const targetFov = 66 + sf * 7 + (paceKey === 'pushL' ? 2.5 : 0);
   if (Math.abs(camera.fov - targetFov) > 0.05) { camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 5); camera.updateProjectionMatrix(); }
-  // 自分の騎手だけ一人称では隠す（手綱・馬は見える、1人用と同じ）
+  // 自分の騎手は一人称では頭だけ消す（腕・袖・手綱が見える。フェーズ23）
   const myMesh = horseMeshes.get(myName);
-  if (myMesh && myMesh.userData.vis) myMesh.userData.vis.jock.visible = false;
+  if (myMesh) setOwnRiderFP(myMesh.userData.vis, true);
   // 太陽はプレイヤーに追随（影の範囲を常に馬群の上に保つ）。オフセットは
   // 1人用と同一の (+40, 190, +60): 旧 (+20, 96, +12) は真上すぎて影が短く、
   // 光の方向感が無く平たく見えた。影カメラの far 340 に対して距離 約203 で収まる
@@ -3582,6 +3671,82 @@ function updateHUD() {
     const d = nick === myName ? myDist : (r ? r.dist : 0);
     dot.style.left = clamp(d / RACE_DIST * 100, 0, 99.5) + '%';
   });
+}
+/* ---------- ガイド（フェーズ23: 状況に応じた勝ち方ヒント） ----------
+   どうやったら勝ちやすいかを、実際の仕様（スリップ消費減・脚質の末脚開始
+   距離 STYLE_PROFILE.kickFrom・コーナーの内外距離差・ムチ1.1秒加速/残り
+   3回・反則3回で降着・おさえるの回復）に即して逐一出す。設定で ON/OFF
+   でき、既定は ON、km_guide に保存する（音量設定と同じ localStorage）。
+   頻度過多を防ぐため、ヒント同士は最低7秒空け、各ヒントは基本レース内
+   1回だけ（スタミナ警告のみ25秒間隔で再表示あり）。表示は絶対配置ピル
+   なので HUD レイアウトは動かない。観戦・リプレイでは出さない。 */
+let guideOn = localStorage.getItem('km_guide') !== '0';
+let guideLastAt = 0, guideHideTimer = 0, guideFoulPending = false;
+let guideSlipSince = 0, guidePaceWarnAt = 0, guideStamLowAt = 0;
+const guideOnce = new Set();
+const GUIDE_STYLE_TIPS = {
+  nige: '作戦【逃げ】スタートから先頭を狙おう。飛ばしすぎると最後に失速するので中盤は馬なりで',
+  senko: '作戦【先行】先頭の直後が理想位置。スリップで温存して、残り430mから勝負！',
+  sashi: '作戦【差し】中団で脚をためて、残り480mを切ったら仕掛けよう',
+  oikomi: '作戦【追込】後方でじっくり温存。残り400mからの末脚が武器！',
+};
+const GUIDE_SPURT_TIPS = {
+  nige: 'ここから粘りどころ！攻めに切り替えて押し切ろう',
+  senko: '仕掛けどころ！攻めに切り替えて抜け出そう',
+  sashi: '仕掛けどころ！外に持ち出して一気に差そう',
+  oikomi: '末脚の出番！大外から一気に追い込もう',
+};
+function guideDisplay(text, dur = 5600) {
+  if (!guideOn) return;
+  const el = $('guide');
+  el.textContent = '💡 ' + text;
+  el.classList.add('on');
+  guideLastAt = performance.now();
+  clearTimeout(guideHideTimer);
+  guideHideTimer = setTimeout(() => el.classList.remove('on'), dur);
+}
+function guideReset() {
+  guideOnce.clear();
+  guideFoulPending = false; guideSlipSince = 0; guidePaceWarnAt = 0; guideStamLowAt = 0; guideLastAt = 0;
+  clearTimeout(guideHideTimer);
+  const el = $('guide'); if (el) el.classList.remove('on');
+}
+function updateGuide() {
+  if (!guideOn || watchMode || replayMode || !racing || myFinished) return;
+  const now = performance.now();
+  // スリップ継続の計測はクールダウン中も進める（1.2秒続いたら「効いている」と教える）
+  if (slipActive) { if (!guideSlipSince) guideSlipSince = now; } else guideSlipSince = 0;
+  if (now - guideLastAt < 7000) return; // ヒント同士の最低間隔
+  const remain = RACE_DIST - myDist;
+  if (guideFoulPending && !guideOnce.has('foul')) {
+    guideOnce.add('foul'); guideFoulPending = false;
+    return guideDisplay('反則3回で降着になる！進路を変えるときは相手との間隔に注意');
+  }
+  if (stamina < 18 && now - guideStamLowAt > 25000) {
+    guideStamLowAt = now;
+    return guideDisplay('スタミナ残りわずか！攻め続けると失速する。『馬なり』『おさえる』で温存しよう');
+  }
+  if (!guideOnce.has('slip') && guideSlipSince && now - guideSlipSince > 1200) {
+    guideOnce.add('slip');
+    return guideDisplay('スリップストリーム中！前の馬の真後ろはスタミナ消費が大きく減る');
+  }
+  if (!guideOnce.has('corner') && myDist > 200 && isCornerAt(myDist)) {
+    guideOnce.add('corner');
+    return guideDisplay('コーナーは内側が距離有利。内を回るほど短く走れる');
+  }
+  const prof = STYLE_PROFILE[myStyleKey] || STYLE_PROFILE.senko;
+  if (!guideOnce.has('spurt') && remain <= prof.kickFrom + 80 && remain > 120) {
+    guideOnce.add('spurt');
+    return guideDisplay(GUIDE_SPURT_TIPS[myStyleKey] || GUIDE_SPURT_TIPS.senko);
+  }
+  if (!guideOnce.has('whip') && remain <= 320 && remain > 60 && whipsUsed < WHIP_MAX && myRank > 1) {
+    guideOnce.add('whip');
+    return guideDisplay(`ムチがあと${WHIP_MAX - whipsUsed}回残っている！ゴール前の一押しに使おう`);
+  }
+  if (stamina < 45 && (paceKey === 'pushS' || paceKey === 'pushL') && now - guidePaceWarnAt > 25000) {
+    guidePaceWarnAt = now;
+    return guideDisplay('スタミナが減ってきた。『おさえる』で少し回復、『馬なり』で温存できる');
+  }
 }
 /* 実況（1人用と同位置・同スタイルのピル表示。文言は簡易生成） */
 function updateCommentary() {
@@ -3682,6 +3847,7 @@ function fmtRaceTime(sec) {
 function showResults(m) {
   const standings = m.standings || [];
   racing = false;
+  $('guide').classList.remove('on'); // ガイドは結果画面に持ち越さない（フェーズ23）
   sfx('goal');
   lastStandings = standings;
   lastBetResult = m.betResult || null;
