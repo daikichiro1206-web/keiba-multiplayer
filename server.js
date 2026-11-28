@@ -20,7 +20,7 @@ const CAT = require('./catalog');
    混在状態のまま公開され、1200m指定が旧カタログの距離リストに無く黙って2000mに
    化けた。/health と認証応答でこの値を返し、クライアントが不一致を検出して
    画面に警告を出すことで、混在デプロイを即座に可視化する。 */
-const BUILD_VERSION = 'phase34';
+const BUILD_VERSION = 'phase35';
 /* 距離の受理: 数値化してから判定する（文字列 "1200" 等の型違いを黙って
    2000m に化けさせない）。不正値のフォールバック時はログに残す。 */
 function validDistance(v) {
@@ -50,6 +50,11 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
    クライアント public/index.html の SPEED_MULT と必ず同値にすること */
 const SPEED_MULT = 1.0;
 const MAX_SPEED = Number(process.env.KEIBA_MAX_SPEED) || 24 * SPEED_MULT; // m/s（テスト時のみ環境変数で緩和）
+/* ゲートタイミング合わせフェーズの制限時間（フェーズ35）: 部屋レースでは
+   全員の準備OKが揃っても即発走せず、まず全員がスタートダッシュの
+   タイミングバー入力を済ませてからカウントダウンに入る。制限時間を過ぎたら
+   未入力者は「ふつう（gateT 0.8）」で自動確定する。テスト時のみ環境変数で短縮可。 */
+const GATE_TIMING_TIMEOUT_MS = Math.max(500, Number(process.env.KEIBA_GATE_TIMING_MS) || 12000);
 const POS_JITTER_M = 2.5;        // 位置検証のジッター許容(m)
 
 /* ---------------- 馬カタログ（実在の名馬50頭、catalog.js＝1人用DEFSが正） ---------------- */
@@ -392,11 +397,12 @@ function makeCode() {
 function roomSummary(room) {
   return {
     code: room.code, state: room.state, mode: room.mode || 'jockey',
+    owner: room.owner || null,
     distance: room.raceDist || 2000,
     raceName: CAT.RACE_INFO[room.raceDist || 2000].name,
     players: [...room.members.values()].map(m => ({
       nickname: m.nickname, horseId: m.horseId, horseName: horseById(m.horseId)?.name || '',
-      ready: m.ready, connected: !!m.ws,
+      ready: m.ready, connected: !!m.ws, gateDone: !!m.gateDone,
     })),
   };
 }
@@ -429,6 +435,7 @@ function createRoom(hostNickname) {
   const room = {
     code, state: 'lobby', members: new Map(), // nickname -> member
     npcs: [], results: null, tickTimer: null, finishTimer: null, raceStartAt: 0,
+    gateTimer: null, gateDeadline: 0, // ゲートタイミング合わせフェーズ（フェーズ35）用
     mode: 'jockey', raceDist: 2000, grade: 'normal', going: CAT.GOING_LIST[0],
     owner: null, betId: null, watchSession: null, firstFinishAt: null, paceHeat: 0, raceClock: 0,
   };
@@ -440,7 +447,8 @@ function addMember(room, nickname, ws) {
   if (!m) {
     m = { nickname, ws, horseId: players[nickname].unlocked[0], ready: false,
           dist: 0, lane: room.members.size, speed: 0, finished: false, finishAt: null, place: null, lastPosAt: 0,
-          fouls: 0, finishClock: null, dayForm: 1 };
+          fouls: 0, finishClock: null, dayForm: 1,
+          gateDone: false, gateResult: null }; // タイミング合わせの入力状態（フェーズ35）
     room.members.set(nickname, m);
   } else {
     m.ws = ws; // 再接続
@@ -451,11 +459,59 @@ function maybeStartCountdown(room) {
   if (room.state !== 'lobby') return;
   const ms = [...room.members.values()];
   if (ms.length === 0 || !ms.every(m => m.ready)) return;
-  room.state = 'countdown';
   buildField(room);
+  /* 部屋レース（マルチ騎手モード）だけ、発走前に「ゲートタイミング合わせ」
+     フェーズを挟む（フェーズ35）。従来は準備OKが揃った瞬間にカウントダウンが
+     始まり、スタートダッシュのタイミングバー入力が間に合わなかった。
+     ソロ・観戦は従来どおり即カウントダウン（フロー不変）。 */
+  if (room.mode === 'jockey' && !room.solo) { startGateTiming(room); return; }
+  beginCountdown(room);
+}
+/* ゲートタイミング合わせフェーズ（フェーズ35）: 全員にタイミングバー入力を
+   出し、各自の gateInput を待つ。全員分が揃うか制限時間（12秒）が過ぎたら
+   カウントダウンへ進む。 */
+function startGateTiming(room) {
+  room.state = 'gateTiming';
+  for (const m of room.members.values()) { m.gateDone = false; m.gateResult = null; }
+  room.gateDeadline = Date.now() + GATE_TIMING_TIMEOUT_MS;
+  broadcast(room, { type: 'gateTiming', field: fieldList(room), meta: raceMeta(room), timeoutSec: GATE_TIMING_TIMEOUT_MS / 1000 });
+  broadcast(room, { type: 'room', room: roomSummary(room) });
+  clearTimeout(room.gateTimer);
+  room.gateTimer = setTimeout(() => finishGateTiming(room), GATE_TIMING_TIMEOUT_MS);
+}
+/* タイミング合わせの締め: 未入力者を「ふつう（gateT 0.8・ブーストなし）」で
+   自動確定し、全員の確定結果をカウントダウンに同梱して発走へ進む。
+   各プレイヤーのゲート判定は本人が入力した結果そのものを使う。 */
+function finishGateTiming(room) {
+  if (room.state !== 'gateTiming') return;
+  clearTimeout(room.gateTimer); room.gateTimer = null;
+  for (const m of room.members.values()) {
+    if (!m.gateDone) { m.gateDone = true; m.gateResult = { gateT: 0.8, boost: false, auto: true }; }
+  }
+  broadcast(room, { type: 'room', room: roomSummary(room) });
+  beginCountdown(room);
+}
+/* 接続中の全員が入力を終えたら、制限時間を待たずに締める
+   （切断中のメンバーは finishGateTiming 側で自動確定になる） */
+function maybeFinishGateTiming(room) {
+  if (room.state !== 'gateTiming') return;
+  const connected = [...room.members.values()].filter(m => m.ws);
+  if (connected.length && connected.every(m => m.gateDone)) finishGateTiming(room);
+}
+/* 確定したゲート結果のマップ（カウントダウンに同梱: クライアントは自分の
+   結果を受け取り、特に入力できなかった人は自動確定の結果をそのまま適用する） */
+function gateResultsMap(room) {
+  const out = {};
+  for (const m of room.members.values()) {
+    if (m.gateResult) out[m.nickname] = { gateT: m.gateResult.gateT, boost: !!m.gateResult.boost, auto: !!m.gateResult.auto };
+  }
+  return out;
+}
+function beginCountdown(room) {
+  room.state = 'countdown';
   const startAt = Date.now() + 3000;
   room.raceStartAt = startAt;
-  broadcast(room, { type: 'countdown', startAt, countdownSec: 3, field: fieldList(room), meta: raceMeta(room) });
+  broadcast(room, { type: 'countdown', startAt, countdownSec: 3, field: fieldList(room), meta: raceMeta(room), gate: gateResultsMap(room) });
   setTimeout(() => startRace(room), 3000);
 }
 /* =====================================================================
@@ -1091,6 +1147,7 @@ function resetRoomToLobby(room) {
   room.state = 'lobby'; room.results = null; room.firstFinishAt = null;
   for (const m of room.members.values()) {
     m.ready = false; m.finished = false; m.dist = 0; m.speed = 0; m.finishAt = null; m.finishClock = null;
+    m.gateDone = false; m.gateResult = null; // タイミング合わせの状態もリセット（フェーズ35）
   }
   broadcast(room, { type: 'room', room: roomSummary(room) });
 }
@@ -1114,10 +1171,16 @@ function leaveRoom(room, nickname) {
   if (m) m.ws = null;
   if (room.state === 'lobby') {
     room.members.delete(nickname);
+    // ホストが抜けたら、次のメンバーへホストを引き継ぐ（距離変更が誰にも
+    // できなくなるのを防ぐ。フェーズ35追加）
+    if (room.owner === nickname) {
+      const next = [...room.members.values()][0];
+      room.owner = next ? next.nickname : null;
+    }
     broadcast(room, { type: 'room', room: roomSummary(room) });
   }
   if (room.members.size === 0 || [...room.members.values()].every(x => !x.ws)) {
-    clearInterval(room.tickTimer); clearTimeout(room.finishTimer);
+    clearInterval(room.tickTimer); clearTimeout(room.finishTimer); clearTimeout(room.gateTimer);
     setTimeout(() => { if ([...room.members.values()].every(x => !x.ws)) rooms.delete(room.code); }, 60000);
   }
 }
@@ -1138,6 +1201,7 @@ wss.on('connection', ws => {
         if (room.members.has(nickname)) {
           member = addMember(room, nickname, ws);
           send(ws, { type: 'room', room: roomSummary(room) });
+          if (room.state === 'gateTiming') send(ws, { type: 'gateTiming', field: fieldList(room), meta: raceMeta(room), timeoutSec: Math.max(1, Math.ceil((room.gateDeadline - Date.now()) / 1000)) });
           if (room.state === 'racing') send(ws, { type: 'raceStart', field: fieldList(room) });
           if (room.state === 'finished' && room.results) send(ws, { type: 'results', standings: room.results });
         }
@@ -1216,6 +1280,7 @@ wss.on('connection', ws => {
         if (room) leaveRoom(room, nickname);
         room = createRoom(nickname);
         room.mode = 'jockey';
+        room.owner = nickname; // 作成者がホスト（ロビーでの距離変更権限。フェーズ35追加）
         room.raceDist = validDistance(msg.distance);
         room.grade = consumeGrade(nickname);
         member = addMember(room, nickname, ws);
@@ -1240,6 +1305,22 @@ wss.on('connection', ws => {
         broadcast(room, { type: 'room', room: roomSummary(room) });
         break;
       }
+      case 'setDistance': {
+        /* ロビー内での距離（ステージ）変更（フェーズ35追加要望）: 部屋を作った
+           後でも、ロビーでホストが距離を決め直せるようにする。ホストのみ・
+           ロビー状態のみ。変更したら全員の準備を未完了にリセットする
+           （変更前の距離前提で ready したまま発走しないための方式）。 */
+        if (!room || room.state !== 'lobby') break;
+        if (room.mode !== 'jockey' || room.owner !== nickname) { send(ws, { type: 'error', message: '距離を変更できるのはホストだけです' }); break; }
+        const d = Number(msg.distance);
+        if (!CAT.DISTANCES.includes(d)) { send(ws, { type: 'error', message: '距離が不正です' }); break; }
+        if (d === room.raceDist) break;
+        room.raceDist = d;
+        room.grade = consumeGrade(nickname); // グレードは新しい開催として引き直す（作成時と同じ）
+        for (const m of room.members.values()) m.ready = false;
+        broadcast(room, { type: 'room', room: roomSummary(room) });
+        break;
+      }
       case 'ready': {
         if (!room) break;
         /* 復旧経路（フェーズ34）: レース終了後（finished）の部屋で ready が来たら、
@@ -1252,6 +1333,20 @@ wss.on('connection', ws => {
         member.ready = !!msg.ready;
         broadcast(room, { type: 'room', room: roomSummary(room) });
         maybeStartCountdown(room);
+        break;
+      }
+      case 'gateInput': {
+        // ゲートタイミング合わせ（フェーズ35）: 本人のタイミングバー判定を
+        // そのまま受理する（自分のスタートを良くも悪くもするだけの自己申告で、
+        // 値はクライアントの判定区分の範囲 0〜1.5 に丸める）。ブーストは
+        // パーフェクト（gateT 0）のときだけ有効。
+        if (!room || room.state !== 'gateTiming' || !member) break;
+        const gt = Number(msg.gateT);
+        const gateT = Number.isFinite(gt) ? Math.min(1.5, Math.max(0, gt)) : 0.8;
+        member.gateResult = { gateT, boost: !!msg.boost && gateT === 0, auto: false };
+        member.gateDone = true;
+        broadcast(room, { type: 'room', room: roomSummary(room) });
+        maybeFinishGateTiming(room);
         break;
       }
       case 'pos': {
