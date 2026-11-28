@@ -13,6 +13,7 @@
  * - テスト用サーバーは DATA_DIR を一時フォルダに向ける（本番データを汚さない）。
  */
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -91,6 +92,21 @@ async function raceToFinish(c, label, nickname, cheatCheck = false) {
 
 async function main() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'keiba-test-data-'));
+  /* 残高フロア移行（フェーズ23）の検証用: フラグの無い旧形式プレイヤーを
+     事前に仕込む。低残高（777G）は10,000Gへ底上げされ、高残高（12,345G）は
+     不変のはず。また底上げは一度きりで、消費後に再ログインしても戻らない。 */
+  const stamp0 = Date.now() % 100000;
+  const oldLowName = '旧低残高' + stamp0, oldHighName = '旧高残高' + stamp0;
+  const mkOld = (balance) => {
+    const salt = 'oldsalt' + Math.random().toString(36).slice(2, 8);
+    return {
+      salt, passHash: crypto.scryptSync('pass-old', salt, 32).toString('hex'),
+      balance, unlocked: ['sodashi', 'mcqueen', 'vodka', 'duramente'], wins: 0, races: 0,
+    };
+  };
+  fs.writeFileSync(path.join(dataDir, 'players.json'), JSON.stringify({
+    [oldLowName]: mkOld(777), [oldHighName]: mkOld(12345),
+  }));
   const server = spawn('node', ['server.js'], {
     cwd: __dirname + '/..',
     env: { ...process.env, PORT, DATA_DIR: dataDir, KEIBA_MAX_SPEED: '600' },
@@ -104,6 +120,16 @@ async function main() {
     const health = await fetch(BASE + '/health');
     const hj = await health.json();
     ok(health.status === 200 && hj.ok === true, 'GET /health が200で応答');
+
+    console.log('— 残高フロア移行（フェーズ23） —');
+    const oldLow = await auth(oldLowName, 'pass-old');
+    ok(oldLow.profile.balance === 10000, '移行: 旧プレイヤー（777G）は10,000Gへ底上げ');
+    const oldHigh = await auth(oldHighName, 'pass-old');
+    ok(oldHigh.profile.balance === 12345, '移行: 旧プレイヤー（12,345G）は不変');
+    const buyOld = await fetch(BASE + '/api/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: oldLow.token, horseId: 'equinox' }) });
+    ok(buyOld.status === 200, '移行: 底上げ後に解放購入できる');
+    const oldLow2 = await auth(oldLowName, 'pass-old');
+    ok(oldLow2.profile.balance === 5000, '移行: 底上げは一度きり（消費後の再ログインで戻らない）');
 
     console.log('— マルチプレイ フロー —');
     const stamp = Date.now() % 100000;
