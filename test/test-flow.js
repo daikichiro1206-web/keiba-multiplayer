@@ -109,18 +109,25 @@ async function main() {
     const stamp = Date.now() % 100000;
     const a = await auth('テストA' + stamp, 'pass-a');
     const b = await auth('テストB' + stamp, 'pass-b');
-    ok(a.profile.balance === 1000, '登録: 初期所持金1000G');
-    ok(a.profile.unlocked.length >= 4, '登録: 初期解放馬あり');
+    ok(a.profile.balance === 10000, '登録: 初期所持金10000G（フェーズ22）');
+    ok(a.profile.unlocked.length >= 8, '登録: 初期解放馬あり（フェーズ22で8頭）');
     const bad = await fetch(BASE + '/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nickname: 'テストA' + stamp, password: 'wrong' }) });
     ok(bad.status === 401, 'ログイン: 合言葉違いを拒否');
 
-    const unlockPoor = await fetch(BASE + '/api/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: a.token, horseId: 'equinox' }) });
-    ok(unlockPoor.status === 400, '解放API: 所持金不足（5000Gの馬）を拒否');
+    // 初期1万Gでは最上位（5000G）も買える。2頭買って残高0にし、所持金不足の拒否を確認する
+    const buyEq = await fetch(BASE + '/api/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: a.token, horseId: 'equinox' }) });
+    ok(buyEq.status === 200, '解放API: 5000Gの馬を初期所持金で解放できる');
+    const buyAl = await fetch(BASE + '/api/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: a.token, horseId: 'almond' }) });
+    ok(buyAl.status === 200, '解放API: 2頭目の5000Gも解放できる（残高0）');
+    const unlockPoor = await fetch(BASE + '/api/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: a.token, horseId: 'contrail' }) });
+    ok(unlockPoor.status === 400, '解放API: 所持金不足（4000Gの馬）を拒否');
     const catRes = await fetch(BASE + '/api/horses');
     const catJ = await catRes.json();
     ok(Array.isArray(catJ) && catJ.length === 50, '名簿: 実在50頭');
     ok(catJ.some(h => h.id === 'croix' && h.name === 'クロワデュノール'), '名簿: 推し馬クロワデュノールがいる');
-    ok(catJ.filter(h => h.price === 0).length === 4, '名簿: 初期解放は4頭（0G）');
+    ok(catJ.filter(h => h.price === 0).length === 8, '名簿: 初期解放は8頭（0G、フェーズ22）');
+    ok(['nige', 'senko', 'sashi', 'oikomi'].every(k => catJ.some(h => h.price === 0 && h.styleKey === k)), '名簿: 初期解放は全脚質をカバー');
+    ok(catJ.filter(h => h.price === 0 && h.rating >= 90).length >= 4, '名簿: 初期解放にレーティング90以上が4頭以上');
     const unlockDup = await fetch(BASE + '/api/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: a.token, horseId: a.profile.unlocked[0] }) });
     ok(unlockDup.status === 400, '解放API: 解放済みの二重解放を拒否');
 
@@ -212,8 +219,8 @@ async function main() {
 
     const r2 = await auth('救済テスト' + stamp, 'pass-r');
     const wf2 = await api('/api/watch/field', { token: r2.token, distance: 2000 });
-    const bet2 = await api('/api/bet', { token: r2.token, type: 'trifecta', picks: wf2.j.field.slice(0, 3), stake: 950, field: wf2.j.field, grade: wf2.j.grade });
-    ok(bet2.status === 200 && bet2.j.balance === 50, '救済準備: 950G賭けて残高50G');
+    const bet2 = await api('/api/bet', { token: r2.token, type: 'trifecta', picks: wf2.j.field.slice(0, 3), stake: 9950, field: wf2.j.field, grade: wf2.j.grade });
+    ok(bet2.status === 200 && bet2.j.balance === 50, '救済準備: 9950G賭けて残高50G（初期1万G前提）');
     const reliefOk = await api('/api/relief', { token: r2.token });
     ok(reliefOk.status === 200 && reliefOk.j.balance === 550, '破産救済: 残高100G未満で500G付与');
     const reliefDup = await api('/api/relief', { token: r2.token });
