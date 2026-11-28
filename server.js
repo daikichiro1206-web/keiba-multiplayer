@@ -20,7 +20,7 @@ const CAT = require('./catalog');
    混在状態のまま公開され、1200m指定が旧カタログの距離リストに無く黙って2000mに
    化けた。/health と認証応答でこの値を返し、クライアントが不一致を検出して
    画面に警告を出すことで、混在デプロイを即座に可視化する。 */
-const BUILD_VERSION = 'phase32';
+const BUILD_VERSION = 'phase34';
 /* 距離の受理: 数値化してから判定する（文字列 "1200" 等の型違いを黙って
    2000m に化けさせない）。不正値のフォールバック時はログに残す。 */
 function validDistance(v) {
@@ -1083,6 +1083,17 @@ function finishRace(room) {
   room.results = standings;
   broadcast(room, { type: 'results', standings, meta: raceMeta(room), winnerJockey, winnerHorseName, betResult });
 }
+/* レース終了後に部屋をロビーへ戻す（フェーズ34）: 全員の準備を未完了に
+   リセットし、同じ部屋・同じメンバー・同じ距離で再戦できる状態にする。
+   結果画面の「ロビーに戻る」(backToLobby) から呼ばれ、ready ハンドラの
+   復旧経路からも使われる。 */
+function resetRoomToLobby(room) {
+  room.state = 'lobby'; room.results = null; room.firstFinishAt = null;
+  for (const m of room.members.values()) {
+    m.ready = false; m.finished = false; m.dist = 0; m.speed = 0; m.finishAt = null; m.finishClock = null;
+  }
+  broadcast(room, { type: 'room', room: roomSummary(room) });
+}
 function leaveRoom(room, nickname) {
   // 観戦レースを途中で離れたら、未精算の賭けは返金して部屋を畳む（1人用 refundBet 相当）
   if (room.mode === 'watch' && room.owner === nickname && room.state !== 'finished' && room.betId != null) {
@@ -1230,7 +1241,14 @@ wss.on('connection', ws => {
         break;
       }
       case 'ready': {
-        if (!room || room.state !== 'lobby') break;
+        if (!room) break;
+        /* 復旧経路（フェーズ34）: レース終了後（finished）の部屋で ready が来たら、
+           先にロビーへ戻して全員の準備をリセットしてから、この ready を適用する。
+           結果画面の「ロビーに戻る」が届かない場合でも、準備ボタンを押せば
+           必ず再戦できるようにするための保険（以前は finished の間 ready が
+           黙って無視され、準備OK表示のまま固まっていた）。 */
+        if (room.state === 'finished') resetRoomToLobby(room);
+        if (room.state !== 'lobby') break;
         member.ready = !!msg.ready;
         broadcast(room, { type: 'room', room: roomSummary(room) });
         maybeStartCountdown(room);
@@ -1271,12 +1289,7 @@ wss.on('connection', ws => {
         break;
       }
       case 'backToLobby': {
-        if (!room) break;
-        if (room.state === 'finished') {
-          room.state = 'lobby'; room.results = null; room.firstFinishAt = null;
-          for (const m of room.members.values()) { m.ready = false; m.finished = false; m.dist = 0; }
-          broadcast(room, { type: 'room', room: roomSummary(room) });
-        }
+        if (room && room.state === 'finished') resetRoomToLobby(room);
         break;
       }
     }
