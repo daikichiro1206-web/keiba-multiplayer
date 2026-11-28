@@ -524,7 +524,7 @@ document.addEventListener('contextmenu', e => {
    「画面フェーズ25×サーバーフェーズ24」の混在状態が公開され、1200mが2000mに
    化ける・新機能が無い、という事故になった。起動時に /health の version と
    照合し、不一致なら警告バナーを出して無言の劣化を防ぐ。 */
-const CLIENT_BUILD = 'phase35';
+const CLIENT_BUILD = 'phase36';
 function checkServerVersion(serverVersion) {
   if (!serverVersion || serverVersion === CLIENT_BUILD) return;
   const el = $('verWarn');
@@ -2778,14 +2778,23 @@ let flashDone = false, photoShownAt = 0, photoActive = false;
 let replayFrames = [], replayAcc = 0, replayOrder = [];
 let replayMode = false, replayT = 0, replaySpeed = 1, replayLast = 0;
 /* フェーズ28: 僅差リプレイ（1着-2着が僅差のときだけの特別演出つきリプレイ）。
-   閾値 0.12秒の根拠: 全頭NPCシミュレーション480レースの着差分布で 91/480=19.0%
-   （約5レースに1回）、馬身換算では約2馬身以内。写真判定の閾値0.17秒より狭く、
-   「写真判定の中でも特に際どい決着」だけを特別扱いする。 */
-const CLOSE_GAP_SEC = 0.12;
+   写真判定の閾値（1人用から移植した既存仕様）。ゴール演出 flashCheck と
+   結果画面 showResults の写真判定もこの定数を使う。 */
+const PHOTO_GAP_SEC = 0.17;
+/* 閾値の変遷: フェーズ28では 0.12秒（全頭NPCシミュレーション480レースの
+   着差分布で 19.0%、約5レースに1回）だった。フェーズ36でユーザー指定により
+   0.4秒へ緩和。実測頻度は、全頭NPC 480レース×2シード（距離・馬場ランダム、
+   tmp/measure-gap-dist.js）で 57.3% / 56.9%（中央値 0.327秒）＝ 約57%。
+   馬身換算では約2.7馬身以内。
+   写真判定（0.17秒）との関係: 僅差リプレイは写真判定より広い「接戦」全般を
+   対象にする。ただしリプレイ内の写真判定の絵は、写真判定の条件
+   （着差 < PHOTO_GAP_SEC）を満たす場合にだけ繋ぐ（closeFinishOf の photo
+   フラグ）。満たさない僅差はフリーズ表示で締める。 */
+const CLOSE_GAP_SEC = 0.4;
 const CLOSE_START_REMAIN_M = 350; // 僅差リプレイの開始位置: 勝ち馬の残り距離がこの値になった地点から（フェーズ35。従来はゴール14秒前≒残り約240m）
 let closeInfo = null;      // { gap, term, first, second }（standings の1・2着。time はサーバー確定時刻）
 let closeMode = false;     // 僅差リプレイ再生中
-let closePhase = 'run';    // run（1倍速）→ slow（0.3倍速）→ freeze（静止）→ photo（写真判定絵）
+let closePhase = 'run';    // run（1倍速）→ slow（0.3倍速）→ freeze（静止）→ photo（写真判定絵。photo条件を満たす場合のみ）
 let closeTFinish = 0;      // リプレイ時刻における勝ち馬のゴール通過点（実フレームから算出）
 let closeFreezeUntil = 0, closePhotoUntil = 0; // 実時間(ms)の期限
 let closeFreezeMs = 1700, closePhotoMs = 2400; // フリーズ/写真の表示時間（検証用フックでのみ変更可）
@@ -3391,7 +3400,13 @@ function finishRankOf(nick) {
 function marginTerm(diffSec) {
   const m = diffSec * 16.5;
   if (m < 0.25) return 'ハナ差'; if (m < 0.5) return 'アタマ差'; if (m < 0.9) return 'クビ差';
-  if (m < 1.4) return '半馬身差'; if (m < 2.1) return '3/4馬身差'; return '1馬身差';
+  if (m < 1.4) return '半馬身差'; if (m < 2.1) return '3/4馬身差'; if (m < 3.0) return '1馬身差';
+  /* フェーズ36: 僅差リプレイの閾値が0.4秒（m≈6.6）まで広がったため、大きな
+     着差の用語も実態に合わせて拡張。写真判定の範囲（<0.17秒 → m<2.81）は
+     従来どおり最大で '1馬身差' のまま変わらない。 */
+  if (m < 3.6) return '1 1/4馬身差'; if (m < 4.2) return '1 1/2馬身差';
+  if (m < 4.8) return '1 3/4馬身差'; if (m < 5.4) return '2馬身差';
+  if (m < 6.6) return '2 1/2馬身差'; return '3馬身差';
 }
 function drawPhotoFinish(pair, diffSec) {
   const cv = $('photoCanvas'); cv.style.display = 'block';
@@ -3421,7 +3436,7 @@ function flashCheck(targetNick, label) {
   if (flashDone || !targetNick || !finishTimes.has(targetNick)) return;
   const myT = finishTimes.get(targetNick);
   let photoClose = false, pending = false;
-  finishTimes.forEach((t, n) => { if (n !== targetNick && Math.abs(t - myT) < 0.17) photoClose = true; });
+  finishTimes.forEach((t, n) => { if (n !== targetNick && Math.abs(t - myT) < PHOTO_GAP_SEC) photoClose = true; });
   runners.forEach((r, n) => { if (n !== targetNick && !finishTimes.has(n) && r.dist > RACE_DIST - 3) pending = true; });
   if (photoClose || pending) {
     if (!photoActive) {
@@ -3571,7 +3586,10 @@ function closeFinishOf(standings) {
   if (!a || !b || a.time == null || b.time == null) return null;
   const gap = b.time - a.time;
   if (!(gap >= 0) || gap > CLOSE_GAP_SEC + 1e-9) return null; // 1e-9 は時刻差の浮動小数点誤差の吸収
-  return { gap, term: marginTerm(gap), first: a, second: b };
+  /* photo: この1-2着ペアが写真判定の条件（着差 < PHOTO_GAP_SEC、showResults の
+     photoPair と i===0 で同条件）を満たすか。フェーズ36で僅差の閾値（0.4秒）が
+     写真判定より広くなったため、リプレイ内の写真判定の絵は photo の場合だけ出す。 */
+  return { gap, term: marginTerm(gap), first: a, second: b, photo: gap < PHOTO_GAP_SEC };
 }
 /* replayOrder の idx が実フレーム上で target(m) に到達するリプレイ時刻を補間で求める */
 function replayTimeAtDist(idx, target) {
@@ -3639,7 +3657,8 @@ function onCloseFreeze() {
   replayCaption(`🏁 ${closeInfo.term}！！\n${closeInfo.first.horseName} が ${closeInfo.second.horseName} を${closeInfo.term}で下した！`, true);
   crowdPulse(); // レース中の歓声は止まっているため、内部で従来の単発歓声にフォールバックする
 }
-/* フリーズ後: 写真判定の絵（既存 drawPhotoFinish）に繋げる */
+/* フリーズ後: 写真判定の絵（既存 drawPhotoFinish）に繋げる。
+   呼ばれるのは closeInfo.photo（着差 < PHOTO_GAP_SEC）の場合だけ（フェーズ36） */
 function showClosePhoto() {
   $('photoTitle').textContent = `📸 写真判定 ― ${closeInfo.term}`;
   $('photoUI').style.display = 'flex';
@@ -3675,7 +3694,13 @@ function replayLoop(now) {
   if (closeMode) {
     if (closePhase === 'freeze') {
       spd = 0;
-      if (now >= closeFreezeUntil) { closePhase = 'photo'; closePhotoUntil = now + closePhotoMs; showClosePhoto(); }
+      if (now >= closeFreezeUntil) {
+        /* 写真判定の絵は、写真判定の条件（着差 < PHOTO_GAP_SEC）を満たす
+           僅差のときだけ（フェーズ36）。満たさない僅差は結果画面でも写真判定に
+           なっていないため、絵を出さずフリーズで締めて整合を取る。 */
+        if (closeInfo && closeInfo.photo) { closePhase = 'photo'; closePhotoUntil = now + closePhotoMs; showClosePhoto(); }
+        else { endReplay(); return; }
+      }
     } else if (closePhase === 'photo') {
       spd = 0.25;
       if (now >= closePhotoUntil) { endReplay(); return; }
@@ -4230,7 +4255,7 @@ if (new URLSearchParams(location.search).has('orbit') || new URLSearchParams(loc
     }),
     // 検証用（フェーズ28）: 僅差リプレイの状態
     closeProbe: () => ({
-      CLOSE_GAP_SEC, CLOSE_START_REMAIN_M, closeStartRemainM, closeMode, closePhase, replayMode,
+      CLOSE_GAP_SEC, PHOTO_GAP_SEC, CLOSE_START_REMAIN_M, closeStartRemainM, closeMode, closePhase, replayMode,
       camPos: camera ? { x: +camera.position.x.toFixed(1), y: +camera.position.y.toFixed(1), z: +camera.position.z.toFixed(1) } : null,
       replayT: +replayT.toFixed(2), closeTFinish: closeTFinish ? +closeTFinish.toFixed(2) : null,
       frames: replayFrames.length,
@@ -4305,7 +4330,7 @@ if (new URLSearchParams(location.search).has('orbit') || new URLSearchParams(loc
     // 仮の僅差に差し替えて僅差リプレイを強制発動する（演出パイプラインの確認用）
     startCloseReplayDemo: (gapSec) => {
       if (!lastStandings || lastStandings.length < 2) return false;
-      closeInfo = { gap: gapSec, term: marginTerm(gapSec), first: lastStandings[0], second: lastStandings[1] };
+      closeInfo = { gap: gapSec, term: marginTerm(gapSec), first: lastStandings[0], second: lastStandings[1], photo: gapSec < PHOTO_GAP_SEC };
       return startCloseReplay();
     },
     // 検証用（フェーズ28）: 僅差リプレイ再生中にゴール手前へシークする
@@ -4932,11 +4957,11 @@ function showResults(m) {
   const meta = m.meta || {};
   const isWatch = meta.mode === 'watch' || !!lastBetResult;
   const me = standings.find(x => x.nickname === myName);
-  // 写真判定: 隣り合う2頭の差が0.17秒未満（先頭争い or 自分が絡む場合）
+  // 写真判定: 隣り合う2頭の差が PHOTO_GAP_SEC 未満（先頭争い or 自分が絡む場合）
   let photoPair = null, photoDiff = 0;
   for (let i = 0; i + 1 < standings.length; i++) {
     const a = standings[i], b = standings[i + 1];
-    if (a.time != null && b.time != null && (b.time - a.time) < 0.17 && (i === 0 || a.nickname === myName || b.nickname === myName)) {
+    if (a.time != null && b.time != null && (b.time - a.time) < PHOTO_GAP_SEC && (i === 0 || a.nickname === myName || b.nickname === myName)) {
       photoPair = [a, b]; photoDiff = b.time - a.time; break;
     }
   }
